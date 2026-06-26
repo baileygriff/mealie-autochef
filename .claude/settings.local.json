@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ruby --version)",
+      "Bash(bundle --version)",
+      "Bash(bundle install *)",
+      "Bash(cp /Users/baileygriffin/Projects/mealie-autochef-ruby/.env.example /Users/baileygriffin/Projects/mealie-autochef-ruby/.env)",
+      "Bash(bundle exec *)",
+      "Bash(python3 -m venv /Users/baileygriffin/Projects/mealie-autochef-ruby/.venv)",
+      "Bash(/Users/baileygriffin/Projects/mealie-autochef-ruby/.venv/bin/pip install *)",
+      "Bash(/Users/baileygriffin/Projects/mealie-autochef-ruby/.venv/bin/playwright install *)"
+    ],
+    "additionalDirectories": [
+      "/Users/baileygriffin/Projects/mealie-autochef-ruby"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+# Dependencies for cart_builder/cart.py ONLY.
+# This is the one Python piece in an otherwise-Ruby project — see the
+# module docstring in cart.py for why. Installed in its own venv (or a
+# venv baked into the same Docker image, alongside the Ruby runtime).
+
+playwright>=1.45

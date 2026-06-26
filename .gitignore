@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Runtime state (never commit)
+data/autochef.db
+data/playwright_state.json
+data/PAUSE
+data/cart_screenshots/
+
+# Ruby
+*.gem
+.bundle/
+vendor/bundle/
+
+# Python (cart_builder/ only)
+cart_builder/__pycache__/
+cart_builder/*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/

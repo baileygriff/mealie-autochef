@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  autochef:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mealie-autochef
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    # CART_BUILDER_PYTHON is set in the Dockerfile (ENV) to point at the
+    # venv's python — not repeated here, so there's a single source of truth.
+    volumes:
+      - ../data:/app/data
+      - ../config.yaml:/app/config.yaml:ro
+    networks:
+      - mealie_net
+
+networks:
+  mealie_net:
+    external: true
+    # This network must already exist and have the Mealie container attached
+    # to it, so autochef can reach Mealie at http://mealie:9000 (per config.yaml).
+    # Create it once with: docker network create mealie_net
+    # Then attach your existing Mealie container/compose service to it.

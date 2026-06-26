@@ -1,0 +1,60 @@
+mealie:
+  url: "http://mealie:9000"        # internal Docker network address
+  # token comes from .env: MEALIE_API_TOKEN
+  eligible_tag: "auto-plan"        # only recipes with this tag enter the pool
+  next_order_list: "Next Order"    # canonical Mealie shopping list = the cart
+
+store:
+  name: "FILL IN — preferred Food Lion store/location"
+  fulfillment: "pickup"
+
+schedule:
+  weekly_run: "Thu 18:00"          # when to generate + send draft for approval
+  pickup_window_pref: "FILL IN — e.g. Sun 10:00-12:00"
+  # the shop/pickup day anchors perishability scheduling
+  pickup_day: "Sun"
+
+meals:
+  meal_types: ["dinner"]           # expandable to ["dinner", "lunch"]
+  default_servings: 2
+  # per-day plan: cook | leftover | out | skip   (FILL IN: real layout)
+  week_layout:
+    Sun: cook
+    Mon: leftover
+    Tue: cook
+    Wed: cook
+    Thu: leftover
+    Fri: out
+    Sat: cook
+
+selection:
+  repeat_avoidance_weeks: 3        # don't replan a dinner within N weeks
+  variety:
+    max_same_cuisine_per_week: 2
+    max_same_protein_per_week: 2
+  scoring_weights:                 # all tunable
+    rating: 1.0
+    tag_affinity: 0.5
+    recency_penalty: 1.0
+    swap_penalty: 0.75
+    nutrition_fit: 0.5             # set 0 to disable protein weighting
+
+nutrition:
+  enabled: true                    # protein-forward weighting; toggle off anytime
+  target_protein_per_serving_g: 45 # supports a high daily-protein goal across meals
+
+llm:
+  provider: "anthropic"
+  model: "claude-haiku-4-5-20251001"
+  enabled: true                    # false => deterministic-only planning
+  freeform_note_default: ""        # Bailey can pass a note at run time via the bot
+
+notify:
+  channel: "telegram"
+  # token + chat id from .env
+
+safety:
+  dry_run: true                    # true => build cart, never auto-checkout
+  spending_cap_usd: 150            # hard cap; abort/flag above this — FILL IN to confirm
+  cart_deviation_alert_pct: 20     # re-confirm if total deviates from estimate
+  kill_switch_file: "data/PAUSE"   # if present, no ordering actions run
