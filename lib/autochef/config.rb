@@ -62,10 +62,16 @@ module Autochef
   end
 
   class ScheduleConfig < ValidatedStruct
-    attr_reader :weekly_run, :pickup_window_pref, :pickup_day
+    attr_reader :weekly_run, :pickup_window_pref, :pickup_day,
+                :thaw_reminder_time, :morning_ping_time, :morning_ping_enabled
 
     validates :weekly_run, :pickup_window_pref, presence: true
     validates :pickup_day, inclusion: { in: WEEKDAYS }
+    validates :thaw_reminder_time, :morning_ping_time, presence: true
+
+    def morning_ping_enabled?
+      morning_ping_enabled == true
+    end
   end
 
   class MealsConfig < ValidatedStruct

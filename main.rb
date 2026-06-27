@@ -7,12 +7,16 @@
 #   bundle exec ruby main.rb check        # Phase 0/1 sanity check
 #   bundle exec ruby main.rb sync         # Phase 1: pull Mealie → recipe_stats
 #   bundle exec ruby main.rb plan         # Phase 2+3: generate plan + send Telegram draft
-#   bundle exec ruby main.rb serve        # Phase 3: long-running Telegram bot (approval + commands)
+#   bundle exec ruby main.rb serve        # Phase 3+6: long-running Telegram bot + reminder scheduler
 #   bundle exec ruby main.rb shop         # Phase 4: build shopping list from approved plan
 #   bundle exec ruby main.rb build-cart   # Phase 5
-#   bundle exec ruby main.rb backup       # Phase 6
+#   bundle exec ruby main.rb feedback     # Phase 6: apply kept/cooked signals to recipe_stats + tag_weights
+#   bundle exec ruby main.rb budget       # Phase 6: print monthly/YTD spend from order_history
+#   bundle exec ruby main.rb backup       # Phase 6: dump SQLite + trigger Mealie backup
 
+require 'fileutils'
 require 'httparty'
+require 'rufus-scheduler'
 require_relative 'lib/autochef/config'
 require_relative 'lib/autochef/database'
 require_relative 'lib/autochef/mealie_client'
@@ -30,6 +34,8 @@ require_relative 'lib/autochef/shopping'
 require_relative 'lib/autochef/safety'
 require_relative 'lib/autochef/cart_client'
 require_relative 'lib/autochef/notify'
+require_relative 'lib/autochef/reminders'
+require_relative 'lib/autochef/feedback'
 
 def ping_uptime_kuma(push_url)
   return false if push_url.to_s.empty?
@@ -389,7 +395,18 @@ def cmd_serve
                                     mealie_client: client,
                                     scorer: scorer,
                                     llm_planner: llm)
-  notifier.run_bot
+
+  # Start reminder scheduler in background threads before the blocking bot loop.
+  scheduler = Rufus::Scheduler.new
+  reminders = Autochef::Reminders.new(cfg, notifier: notifier)
+  reminders.schedule!(scheduler)
+
+  begin
+    notifier.run_bot  # blocks until process is killed
+  ensure
+    scheduler.shutdown
+  end
+
   0
 end
 
@@ -645,10 +662,178 @@ def write_order_history(run_key, plan_history, cart_result, notes: nil)
   record
 end
 
-def not_implemented_yet(command)
-  puts "`#{command}` is not implemented yet — it lands in a later build phase."
-  puts 'See MEALIE_AUTOMATION_PLAN.md section 10 for the phase breakdown.'
-  1
+def cmd_feedback(force: false)
+  puts '=== Mealie AutoChef — feedback (Phase 6) ==='
+
+  begin
+    cfg = Autochef::Config.load
+  rescue StandardError => e
+    puts "Config load FAILED: #{e.message}"
+    return 1
+  end
+
+  begin
+    Autochef::Database.connect!
+    Autochef::Database.migrate!
+  rescue StandardError => e
+    puts "DB init/migrate FAILED: #{e.message}"
+    return 1
+  end
+
+  order_record = Autochef::Models::OrderHistory.order(created_at: :desc).first
+  if order_record.nil?
+    puts 'No order_history rows found. Build a cart first with `main.rb build-cart`.'
+    return 1
+  end
+
+  puts "Using order_history id=#{order_record.id} (week of #{order_record.week_start}, " \
+       "status: #{order_record.status})."
+
+  # Try to reach Mealie for tag updates (graceful degradation if unreachable).
+  mealie_client = nil
+  begin
+    client = build_client(cfg)
+    client.ping
+    mealie_client = client
+    puts 'Mealie reachable — tag_weight updates enabled.'
+  rescue StandardError => e
+    puts "Mealie unreachable (#{e.message.slice(0, 80)}) — will update recipe_stats only."
+  end
+
+  applier = Autochef::FeedbackApplier.new(mealie_client: mealie_client)
+
+  begin
+    result = applier.apply(order_record, force: force)
+  rescue StandardError => e
+    puts "Feedback apply FAILED: #{e.message}"
+    return 1
+  end
+
+  if result.already_applied
+    puts 'Feedback already applied for this order. Pass --force to re-apply.'
+    return 0
+  end
+
+  puts "\nFeedback applied:"
+  puts "  #{result.cooked_count} recipe(s) — times_cooked incremented, last_cooked updated"
+
+  if mealie_client
+    puts "  #{result.tag_updates} recipe(s) — tag_weights nudged"
+    puts "  #{result.tag_skipped} recipe(s) skipped (tag fetch failed)" if result.tag_skipped.positive?
+  else
+    puts '  (tag_weight updates skipped — Mealie unreachable)'
+  end
+
+  ping_uptime_kuma(ENV.fetch('UPTIME_KUMA_PUSH_URL', ''))
+  0
+end
+
+def cmd_budget
+  puts '=== Mealie AutoChef — budget (Phase 6) ==='
+
+  begin
+    cfg = Autochef::Config.load
+  rescue StandardError => e
+    puts "Config load FAILED: #{e.message}"
+    return 1
+  end
+
+  begin
+    Autochef::Database.connect!
+    Autochef::Database.migrate!
+  rescue StandardError => e
+    puts "DB init/migrate FAILED: #{e.message}"
+    return 1
+  end
+
+  cap = cfg.safety.spending_cap_usd.to_f
+  now = Date.today
+
+  all_rows = Autochef::Models::OrderHistory
+             .where.not(actual_total: nil)
+             .order(week_start: :asc)
+             .to_a
+
+  if all_rows.empty?
+    puts 'No completed orders with actual totals recorded yet.'
+    return 0
+  end
+
+  month_start = Date.new(now.year, now.month, 1)
+  year_start  = Date.new(now.year, 1, 1)
+
+  this_month = all_rows.select { |r| r.week_start.to_date >= month_start }
+  this_year  = all_rows.select { |r| r.week_start.to_date >= year_start }
+
+  month_total = this_month.sum { |r| r.actual_total.to_f }
+  year_total  = this_year.sum  { |r| r.actual_total.to_f }
+
+  puts ''
+  puts "Spending cap: $#{'%.2f' % cap}"
+  puts "This month (#{now.strftime('%B %Y')}): $#{'%.2f' % month_total} " \
+       "(#{this_month.size} order(s))"
+  puts "YTD (#{now.year}): $#{'%.2f' % year_total} (#{this_year.size} order(s))"
+
+  puts ''
+  puts 'Weekly breakdown:'
+  all_rows.each do |r|
+    total_str = '$%.2f' % r.actual_total.to_f
+    over_flag = r.actual_total.to_f > cap ? '  *** OVER CAP ***' : ''
+    puts "  Week of #{r.week_start}: #{total_str}#{over_flag}"
+  end
+
+  over_cap = all_rows.select { |r| r.actual_total.to_f > cap }
+  if over_cap.any?
+    puts ''
+    puts "#{over_cap.size} week(s) exceeded spending cap ($#{'%.2f' % cap})."
+    return 1
+  end
+
+  0
+end
+
+def cmd_backup
+  puts '=== Mealie AutoChef — backup (Phase 6) ==='
+
+  begin
+    cfg = Autochef::Config.load
+  rescue StandardError => e
+    puts "Config load FAILED: #{e.message}"
+    return 1
+  end
+
+  errors = []
+
+  # 1. SQLite dump: copy autochef.db → data/backups/autochef_YYYYMMDD.db
+  db_path    = File.join(Autochef::REPO_ROOT, 'data', 'autochef.db')
+  backup_dir = File.join(Autochef::REPO_ROOT, 'data', 'backups')
+
+  if File.exist?(db_path)
+    FileUtils.mkdir_p(backup_dir)
+    timestamp   = Date.today.strftime('%Y%m%d')
+    backup_path = File.join(backup_dir, "autochef_#{timestamp}.db")
+    FileUtils.cp(db_path, backup_path)
+    puts "SQLite backed up: #{backup_path} (#{File.size(backup_path)} bytes)"
+  else
+    msg = "autochef.db not found at #{db_path} — nothing to back up."
+    puts "WARNING: #{msg}"
+    errors << msg
+  end
+
+  # 2. Mealie backup: POST /api/admin/backups
+  begin
+    client = build_client(cfg)
+    client.ping
+    client.trigger_backup
+    puts 'Mealie backup triggered via API.'
+  rescue StandardError => e
+    msg = "Mealie backup failed: #{e.message.slice(0, 200)}"
+    puts msg
+    errors << msg
+  end
+
+  ping_uptime_kuma(ENV.fetch('UPTIME_KUMA_PUSH_URL', ''))
+  errors.empty? ? 0 : 1
 end
 
 def main
@@ -667,10 +852,14 @@ def main
     cmd_shop
   when 'build-cart'
     cmd_build_cart(force: ARGV.include?('--force'))
+  when 'feedback'
+    cmd_feedback(force: ARGV.include?('--force'))
+  when 'budget'
+    cmd_budget
   when 'backup'
-    not_implemented_yet(command)
+    cmd_backup
   when nil
-    puts 'Usage: ruby main.rb <check|sync|serve|plan|shop|build-cart [--force]|backup>'
+    puts 'Usage: ruby main.rb <check|sync|serve|plan|shop|build-cart [--force]|feedback [--force]|budget|backup>'
     1
   else
     puts "Unknown command: #{command}"

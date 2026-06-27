@@ -13,6 +13,10 @@ schedule:
   pickup_window_pref: "FILL IN — e.g. Sun 10:00-12:00"
   # the shop/pickup day anchors perishability scheduling
   pickup_day: "Sun"
+  # Phase 6 reminders (fired by `main.rb serve` via rufus-scheduler)
+  thaw_reminder_time: "18:00"      # evening before a cook day — protein thaw nudge
+  morning_ping_time: "08:00"       # cook-day morning ping ("Tonight: [recipe]")
+  morning_ping_enabled: false      # opt-in: set true to enable the morning ping
 
 meals:
   meal_types: ["dinner"]           # expandable to ["dinner", "lunch"]

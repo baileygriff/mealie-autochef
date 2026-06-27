@@ -841,6 +841,28 @@ module Autochef
       bot_api.send_message(chat_id: @chat_id, text: text, parse_mode: 'Markdown')
     end
 
+    # -------------------------------------------------------------------------
+    # Reminder notifications (Phase 6) — called by Reminders scheduler jobs
+    # -------------------------------------------------------------------------
+
+    # Send the night-before thaw nudge: "take the protein out tonight".
+    def send_thaw_reminder(date:, recipe_name:)
+      day_name = date.strftime('%A')
+      text = "*Thaw reminder* — tomorrow is #{day_name}!\n\n" \
+             "Take the protein out tonight for: *#{recipe_name}*"
+      bot_api.send_message(chat_id: @chat_id, text: text, parse_mode: 'Markdown')
+    rescue StandardError => e
+      warn "send_thaw_reminder error: #{e.message}"
+    end
+
+    # Send the optional cook-day morning ping: "tonight's dinner is X".
+    def send_morning_ping(date:, recipe_name:)
+      text = "*Tonight:* #{recipe_name}"
+      bot_api.send_message(chat_id: @chat_id, text: text, parse_mode: 'Markdown')
+    rescue StandardError => e
+      warn "send_morning_ping error: #{e.message}"
+    end
+
     # Push an item to the Mealie "Next Order" shopping list.
     # Returns true on success, false on failure.
     def push_to_next_order(name:, quantity:, unit:)

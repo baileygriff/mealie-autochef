@@ -181,6 +181,12 @@ module Autochef
       get("/api/groups/shopping/lists/#{list_id}")
     end
 
+    # POST /api/admin/backups — trigger Mealie's built-in backup.
+    # Requires an admin token. Returns the response hash.
+    def trigger_backup
+      post('/api/admin/backups', {})
+    end
+
     # Suggest a shelf_life_days value for a food by name.
     # Returns an Integer, or PANTRY_DEFAULT_DAYS if no pattern matches.
     def self.suggest_shelf_life(food_name)
