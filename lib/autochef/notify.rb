@@ -780,6 +780,67 @@ module Autochef
         "_Plan is saved. Run `main.rb shop` to retry._"
     end
 
+    # -------------------------------------------------------------------------
+    # Cart-ready notifications (Phase 5)
+    # -------------------------------------------------------------------------
+
+    # Send a "cart is ready" Telegram message after a successful cart build.
+    # result is the Hash parsed from cart.py's OUTPUT_SCHEMA JSON.
+    # deviation_warning is an optional String from Safety#deviation_warning.
+    def send_cart_ready(result, dry_run:, deviation_warning: nil)
+      lines = ["*Cart ready✅*"]
+      lines[0] += ' _(dry run — cart built, no order placed)_' if dry_run
+      lines << ''
+
+      if result['cart_total']
+        lines << "Total: *$#{'%.2f' % result['cart_total']}*"
+      elsif result['est_total']
+        lines << "Est. total: *$#{'%.2f' % result['est_total']}* (actual not captured)"
+      end
+
+      lines << "Pickup slot: #{result['pickup_slot']}" if result['pickup_slot']
+
+      if result['cart_url']
+        lines << ''
+        lines << "[Open cart in Food Lion](#{result['cart_url']})"
+      end
+
+      if result['flagged_items']&.any?
+        lines << ''
+        lines << "*#{result['flagged_items'].size} item(s) could not be added ⚠️*"
+        result['flagged_items'].each { |item| lines << "  • #{item}" }
+        lines << "_These were not substituted. Add them manually in the Food Lion app._"
+      end
+
+      if deviation_warning
+        lines << ''
+        lines << "⚠️ *#{deviation_warning}*"
+      end
+
+      if result['screenshot_path']
+        lines << ''
+        lines << "_Screenshot: `#{result['screenshot_path']}`_"
+      end
+
+      if dry_run
+        lines << ''
+        lines << "_Review the cart in Food Lion To Go, then place the order manually._"
+      end
+
+      bot_api.send_message(
+        chat_id:    @chat_id,
+        text:       lines.join("\n"),
+        parse_mode: 'Markdown'
+      )
+    end
+
+    # Send a Telegram alert when the cart build was aborted (kill switch,
+    # spending cap, crash, etc.).
+    def send_cart_aborted(reason)
+      text = "*Cart build aborted ⛔*\n\n#{reason}"
+      bot_api.send_message(chat_id: @chat_id, text: text, parse_mode: 'Markdown')
+    end
+
     # Push an item to the Mealie "Next Order" shopping list.
     # Returns true on success, false on failure.
     def push_to_next_order(name:, quantity:, unit:)

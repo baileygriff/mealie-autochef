@@ -18,13 +18,17 @@ require_relative 'lib/autochef/database'
 require_relative 'lib/autochef/mealie_client'
 require_relative 'lib/autochef/models/recipe_stat'
 require_relative 'lib/autochef/models/plan_history'
+require_relative 'lib/autochef/models/order_history'
 require_relative 'lib/autochef/models/manual_addition'
 require_relative 'lib/autochef/models/recurring_item'
+require_relative 'lib/autochef/models/product_map'
 require_relative 'lib/autochef/scoring'
 require_relative 'lib/autochef/planner'
 require_relative 'lib/autochef/llm_planner'
 require_relative 'lib/autochef/recurring'
 require_relative 'lib/autochef/shopping'
+require_relative 'lib/autochef/safety'
+require_relative 'lib/autochef/cart_client'
 require_relative 'lib/autochef/notify'
 
 def ping_uptime_kuma(push_url)
@@ -448,6 +452,199 @@ def cmd_shop
   result.unmapped_items.empty? ? 0 : 1
 end
 
+def cmd_build_cart(force: false)
+  puts '=== Mealie AutoChef — build-cart (Phase 5) ==='
+
+  begin
+    cfg = Autochef::Config.load
+  rescue StandardError => e
+    puts "Config load FAILED: #{e.message}"
+    return 1
+  end
+
+  begin
+    Autochef::Database.connect!
+    Autochef::Database.migrate!
+  rescue StandardError => e
+    puts "DB init/migrate FAILED: #{e.message}"
+    return 1
+  end
+
+  safety = Autochef::Safety.new(cfg)
+
+  # Kill switch — first thing checked in any ordering flow.
+  begin
+    safety.check_kill_switch!
+  rescue Autochef::Safety::KillSwitchError => e
+    puts "HALTED: #{e.message}"
+    return 1
+  end
+
+  # Require an approved plan so we have a week_start for the idempotency key.
+  history = Autochef::Models::PlanHistory.where(approved: 1).order(created_at: :desc).first
+  if history.nil?
+    puts 'No approved plan found. Run `main.rb plan` and approve it first.'
+    return 1
+  end
+
+  week_start = history.week_start.to_date
+  run_key    = safety.idempotency_key(week_start)
+  puts "Run key: #{run_key}"
+
+  # Idempotency — skip if we already built the cart for this week.
+  unless force
+    begin
+      safety.check_idempotency!(run_key)
+    rescue Autochef::Safety::IdempotencyError => e
+      puts "SKIP: #{e.message}"
+      return 0
+    end
+  end
+
+  # Fetch the current "Next Order" list from Mealie.
+  client = build_client(cfg)
+  begin
+    client.ping
+  rescue StandardError => e
+    puts "Cannot reach Mealie: #{e.message}"
+    puts 'Tip: set MEALIE_URL in .env or run inside Docker.'
+    return 1
+  end
+
+  list      = client.find_or_create_shopping_list(cfg.mealie.next_order_list)
+  full_list = client.shopping_list(list['id'])
+  raw_items = full_list['listItems'] || full_list['items'] || []
+
+  if raw_items.empty?
+    puts "Next Order list is empty — run `main.rb shop` first."
+    return 1
+  end
+
+  puts "Found #{raw_items.size} item(s) in Next Order."
+  cart_items = raw_items.map { |item| resolve_cart_item(item) }
+
+  # Build the input payload for cart.py.
+  input = {
+    'run_key'                  => run_key,
+    'store_name'               => cfg.store.name,
+    'pickup_window_pref'       => cfg.schedule.pickup_window_pref,
+    'spending_cap_usd'         => cfg.safety.spending_cap_usd,
+    'cart_deviation_alert_pct' => cfg.safety.cart_deviation_alert_pct,
+    'dry_run'                  => cfg.safety.dry_run,
+    'items'                    => cart_items
+  }
+
+  puts "\nInvoking cart builder (#{cart_items.size} item(s))..."
+  puts "(dry_run: true — cart will be built but no order placed)" if cfg.safety.dry_run
+
+  begin
+    result = Autochef::CartClient.build_cart(input)
+  rescue Autochef::CartClient::CartBuilderError => e
+    puts "Cart builder CRASHED: #{e.message}"
+    return 1
+  end
+
+  puts "Cart builder status: #{result['status']}"
+
+  case result['status']
+  when 'cart_built'
+    cart_total = result['cart_total']&.to_f
+
+    # Spending cap (defence-in-depth; cart.py also checks, Ruby checks here for logging).
+    begin
+      safety.check_spending_cap!(cart_total)
+    rescue Autochef::Safety::SpendingCapError => e
+      puts "SPENDING CAP EXCEEDED: #{e.message}"
+      write_order_history(run_key, history, result.merge('status' => 'aborted'), notes: e.message)
+      if cfg.notify.channel == 'telegram' && !cfg.notify.telegram_bot_token.to_s.empty?
+        Autochef::Notifier.new(cfg, mealie_client: client).send_cart_aborted(e.message)
+      end
+      return 1
+    end
+
+    dev_warning = safety.deviation_warning(result['est_total']&.to_f, cart_total)
+    result['deviation_warning'] = dev_warning if dev_warning
+
+    record = write_order_history(run_key, history, result)
+    puts "Order history saved (id=#{record.id})."
+    puts "Screenshot: #{result['screenshot_path']}" if result['screenshot_path']
+
+    if dev_warning
+      puts "\nWARNING: #{dev_warning}"
+    end
+
+    if result['flagged_items']&.any?
+      puts "\n#{result['flagged_items'].size} item(s) flagged (out of stock / not found):"
+      result['flagged_items'].each { |item| puts "  • #{item}" }
+    end
+
+    if cfg.notify.channel == 'telegram' && !cfg.notify.telegram_bot_token.to_s.empty?
+      Autochef::Notifier.new(cfg, mealie_client: client)
+                        .send_cart_ready(result, dry_run: cfg.safety.dry_run,
+                                         deviation_warning: dev_warning)
+      puts "Telegram notification sent."
+    end
+
+  when 'aborted'
+    reason = result['abort_reason'] || 'Unknown abort reason'
+    puts "Cart build aborted: #{reason}"
+    write_order_history(run_key, history, result, notes: reason)
+    if cfg.notify.channel == 'telegram' && !cfg.notify.telegram_bot_token.to_s.empty?
+      Autochef::Notifier.new(cfg, mealie_client: client).send_cart_aborted(reason)
+    end
+    return 1
+
+  else
+    puts "Unexpected status from cart builder: #{result['status'].inspect}"
+    return 1
+  end
+
+  ping_uptime_kuma(ENV.fetch('UPTIME_KUMA_PUSH_URL', ''))
+  0
+end
+
+# Resolve a Mealie shopping list item to a cart input hash for cart.py.
+# Tries to look up the product_map by the item's normalized display name.
+# Falls back to the item's own name + quantity if unmapped.
+def resolve_cart_item(mealie_item)
+  raw_name = mealie_item['note'].to_s.strip
+  key      = raw_name.downcase.strip.gsub(/\s+/, ' ')
+  mapping  = Autochef::Models::ProductMap.find_by(key: key)
+
+  if mapping
+    {
+      'search_term' => mapping.search_term.to_s.empty? ? raw_name : mapping.search_term,
+      'default_qty' => (mapping.default_qty || 1).to_i,
+      'pack_unit'   => mapping.pack_unit
+    }
+  else
+    qty  = mealie_item['quantity']&.to_f || 1.0
+    unit = mealie_item.dig('unit', 'name')
+    {
+      'search_term' => raw_name,
+      'default_qty' => [qty.ceil, 1].max,
+      'pack_unit'   => unit
+    }
+  end
+end
+
+# Persist cart builder output to order_history. Returns the saved record.
+# If a row already exists for run_key (force-rebuild), it's updated in-place.
+def write_order_history(run_key, plan_history, cart_result, notes: nil)
+  record = Autochef::Models::OrderHistory.for_run_key(run_key).first ||
+           Autochef::Models::OrderHistory.new(run_key: run_key)
+
+  record.week_start   = plan_history.week_start
+  record.items_json   = (cart_result['items'] || []).to_json
+  record.est_total    = cart_result['est_total']&.to_f
+  record.actual_total = cart_result['cart_total']&.to_f
+  record.status       = cart_result['status']
+  record.pickup_slot  = cart_result['pickup_slot']
+  record.notes        = [notes, cart_result['abort_reason']].compact.join('; ')
+  record.save!
+  record
+end
+
 def not_implemented_yet(command)
   puts "`#{command}` is not implemented yet — it lands in a later build phase."
   puts 'See MEALIE_AUTOMATION_PLAN.md section 10 for the phase breakdown.'
@@ -468,10 +665,12 @@ def main
     cmd_plan(freeform_note: ARGV[1])
   when 'shop'
     cmd_shop
-  when 'build-cart', 'backup'
+  when 'build-cart'
+    cmd_build_cart(force: ARGV.include?('--force'))
+  when 'backup'
     not_implemented_yet(command)
   when nil
-    puts 'Usage: ruby main.rb <check|sync|serve|plan|shop|build-cart|backup>'
+    puts 'Usage: ruby main.rb <check|sync|serve|plan|shop|build-cart [--force]|backup>'
     1
   else
     puts "Unknown command: #{command}"
