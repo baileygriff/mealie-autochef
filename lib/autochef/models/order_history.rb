@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "json"
+require 'json'
 
 module Autochef
   module Models
@@ -8,7 +8,7 @@ module Autochef
     # safety.rb) — re-running the same week's build should reconcile against
     # an existing row, not double-order.
     class OrderHistory < ActiveRecord::Base
-      self.table_name = "order_history"
+      self.table_name = 'order_history'
 
       validates :status, inclusion: { in: %w[cart_built approved placed aborted] }, allow_nil: true
 

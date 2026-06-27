@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require "open3"
-require "json"
+require 'open3'
+require 'json'
 
 module Autochef
   # Ruby-side half of the contract documented in cart_builder/cart.py's
@@ -16,10 +16,10 @@ module Autochef
   class CartClient
     class CartBuilderError < StandardError; end
 
-    PYTHON_SCRIPT = File.expand_path("../../cart_builder/cart.py", __dir__)
+    PYTHON_SCRIPT = File.expand_path('../../cart_builder/cart.py', __dir__)
     # Assumes a venv with cart_builder/requirements.txt installed is on
     # PATH as `python3` inside the container — see docker/Dockerfile.
-    PYTHON_BIN = ENV.fetch("CART_BUILDER_PYTHON", "python3")
+    PYTHON_BIN = ENV.fetch('CART_BUILDER_PYTHON', 'python3')
 
     # input: a Hash matching cart.py's INPUT_SCHEMA (run_key, store_name,
     #   pickup_window_pref, spending_cap_usd, cart_deviation_alert_pct,
@@ -36,9 +36,7 @@ module Autochef
 
       stderr_str.each_line { |line| warn "[cart_builder] #{line.chomp}" }
 
-      unless status.success?
-        raise CartBuilderError, "cart.py exited #{status.exitstatus}: #{stderr_str}"
-      end
+      raise CartBuilderError, "cart.py exited #{status.exitstatus}: #{stderr_str}" unless status.success?
 
       begin
         JSON.parse(stdout_str)

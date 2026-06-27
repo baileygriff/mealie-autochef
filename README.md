@@ -4,12 +4,16 @@ Weekly meal-planning → shopping-list → grocery-cart automation for a
 self-hosted Mealie instance, with a human approval gate (Telegram) and a
 manual final checkout. Target store: Food Lion, pickup.
 
-Read `MEALIE_AUTOMATION_PLAN.md` for the full spec and `MEMORY.md` for
-running project context, locked decisions, and gotchas. **Read both before
-making changes** — several decisions (pickup-only, manual checkout,
-Playwright over an AI browser agent, Ruby+ActiveRecord with one isolated
-Python file) are intentional and shouldn't be relitigated without a
-documented reason.
+## Documentation
+
+- [User Guide](docs/USER_GUIDE.md) — setup, weekly operation, configuration reference, troubleshooting
+- [Developer Guide](docs/DEVELOPER_GUIDE.md) — architecture, code structure, build phases, how to extend
+
+For the full feature spec and design decisions, see `MEALIE_AUTOMATION_PLAN.md`. For running
+project context and locked decisions, see `MEMORY.md`. **Read both before making changes** —
+several decisions (pickup-only, manual checkout, Playwright over an AI browser agent,
+Ruby+ActiveRecord with one isolated Python file) are intentional and shouldn't be re-litigated
+without a documented reason.
 
 ## Language: Ruby, with one Python file
 

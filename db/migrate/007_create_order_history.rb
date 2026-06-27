@@ -11,7 +11,7 @@ class CreateOrderHistory < ActiveRecord::Migration[7.1]
       t.string :pickup_slot
       t.string :run_key # idempotency key
       t.text :notes
-      t.timestamp :created_at, default: -> { "CURRENT_TIMESTAMP" }
+      t.timestamp :created_at, default: -> { 'CURRENT_TIMESTAMP' }
     end
 
     add_index :order_history, :week_start

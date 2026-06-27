@@ -11,7 +11,7 @@ class CreateRecipeStats < ActiveRecord::Migration[7.1]
       t.date :last_cooked
       t.float :avg_rating
       t.float :score, default: 0
-      t.timestamp :updated_at, default: -> { "CURRENT_TIMESTAMP" }
+      t.timestamp :updated_at, default: -> { 'CURRENT_TIMESTAMP' }
     end
   end
 end

@@ -6,7 +6,7 @@ module Autochef
     # plan. Written here AND pushed to the Mealie "Next Order" list;
     # `consumed` marks it as already folded into a built cart.
     class ManualAddition < ActiveRecord::Base
-      self.table_name = "manual_additions"
+      self.table_name = 'manual_additions'
 
       validates :name, presence: true
 

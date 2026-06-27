@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-require "yaml"
-require "dotenv"
-require "active_model"
+require 'yaml'
+require 'dotenv'
+require 'active_model'
 
 module Autochef
   # Loads and validates config.yaml + .env into a single Config object.
@@ -20,9 +20,9 @@ module Autochef
   WEEKDAYS = %w[Mon Tue Wed Thu Fri Sat Sun].freeze
   DAY_TYPES = %w[cook leftover out skip].freeze
 
-  REPO_ROOT = File.expand_path("../..", __dir__)
-  DEFAULT_CONFIG_PATH = File.join(REPO_ROOT, "config.yaml")
-  DEFAULT_ENV_PATH = File.join(REPO_ROOT, ".env")
+  REPO_ROOT = File.expand_path('../..', __dir__)
+  DEFAULT_CONFIG_PATH = File.join(REPO_ROOT, 'config.yaml')
+  DEFAULT_ENV_PATH = File.join(REPO_ROOT, '.env')
 
   class ConfigError < StandardError; end
 
@@ -79,11 +79,11 @@ module Autochef
     private
 
     def meal_types_present
-      errors.add(:meal_types, "must be a non-empty array") if meal_types.nil? || meal_types.empty?
+      errors.add(:meal_types, 'must be a non-empty array') if meal_types.nil? || meal_types.empty?
     end
 
     def week_layout_valid
-      return errors.add(:week_layout, "must be a hash") unless week_layout.is_a?(Hash)
+      return errors.add(:week_layout, 'must be a hash') unless week_layout.is_a?(Hash)
 
       bad_days = week_layout.keys.map(&:to_s) - WEEKDAYS
       errors.add(:week_layout, "has unknown day(s): #{bad_days}") if bad_days.any?
@@ -116,7 +116,7 @@ module Autochef
       attrs = attrs.dup
       attrs[:variety] = VarietyConfig.new(attrs[:variety] || {})
       attrs[:scoring_weights] = ScoringWeights.new(attrs[:scoring_weights] || {})
-      super(attrs)
+      super
     end
   end
 
@@ -150,7 +150,7 @@ module Autochef
       # Not a hard failure (Phase 7 may legitimately flip this) but dry_run
       # is the single most important flag in the whole system — make any
       # accidental flip-to-live impossible to miss in logs.
-      warn "!!! WARNING: safety.dry_run is FALSE. Auto-checkout is LIVE. !!!" if dry_run == false
+      warn '!!! WARNING: safety.dry_run is FALSE. Auto-checkout is LIVE. !!!' if dry_run == false
     end
   end
 
@@ -172,10 +172,13 @@ module Autochef
 
       raw = YAML.safe_load_file(config_path, symbolize_names: true)
 
-      raw[:mealie][:api_token] = ENV.fetch("MEALIE_API_TOKEN", "")
-      raw[:llm][:api_key] = ENV.fetch("ANTHROPIC_API_KEY", "")
-      raw[:notify][:telegram_bot_token] = ENV.fetch("TELEGRAM_BOT_TOKEN", "")
-      raw[:notify][:telegram_chat_id] = ENV.fetch("TELEGRAM_CHAT_ID", "")
+      # MEALIE_URL overrides config.yaml for local dev (outside Docker).
+      # Set it in .env when Mealie is reachable at a different host/port locally.
+      raw[:mealie][:url] = ENV.fetch('MEALIE_URL', raw[:mealie][:url])
+      raw[:mealie][:api_token] = ENV.fetch('MEALIE_API_TOKEN', '')
+      raw[:llm][:api_key] = ENV.fetch('ANTHROPIC_API_KEY', '')
+      raw[:notify][:telegram_bot_token] = ENV.fetch('TELEGRAM_BOT_TOKEN', '')
+      raw[:notify][:telegram_chat_id] = ENV.fetch('TELEGRAM_CHAT_ID', '')
 
       cfg = new(raw)
       cfg.send(:warn_on_missing_secrets)
@@ -198,11 +201,11 @@ module Autochef
 
     def warn_on_missing_secrets
       missing = []
-      missing << "MEALIE_API_TOKEN" if mealie.api_token.to_s.empty?
-      missing << "ANTHROPIC_API_KEY" if llm.enabled && llm.api_key.to_s.empty?
-      if notify.channel == "telegram"
-        missing << "TELEGRAM_BOT_TOKEN" if notify.telegram_bot_token.to_s.empty?
-        missing << "TELEGRAM_CHAT_ID" if notify.telegram_chat_id.to_s.empty?
+      missing << 'MEALIE_API_TOKEN' if mealie.api_token.to_s.empty?
+      missing << 'ANTHROPIC_API_KEY' if llm.enabled && llm.api_key.to_s.empty?
+      if notify.channel == 'telegram'
+        missing << 'TELEGRAM_BOT_TOKEN' if notify.telegram_bot_token.to_s.empty?
+        missing << 'TELEGRAM_CHAT_ID' if notify.telegram_chat_id.to_s.empty?
       end
 
       warn "!!! WARNING: missing secrets in .env: #{missing.join(', ')} !!!" if missing.any?
@@ -213,7 +216,7 @@ end
 if __FILE__ == $PROGRAM_NAME
   # Quick manual check: `ruby lib/autochef/config.rb` (after bundle install)
   cfg = Autochef::Config.load
-  require "json"
+  require 'json'
   puts({
     mealie: cfg.mealie.url,
     store: cfg.store.name,

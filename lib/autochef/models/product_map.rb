@@ -7,8 +7,8 @@ module Autochef
     # Seeded interactively via scripts/seed_product_map.rb (Phase 4).
     # Unmapped ingredients are flagged at cart-build time, never guessed.
     class ProductMap < ActiveRecord::Base
-      self.table_name = "product_map"
-      self.primary_key = "key"
+      self.table_name = 'product_map'
+      self.primary_key = 'key'
 
       validates :rounding, inclusion: { in: %w[up down nearest] }, allow_nil: true
     end
