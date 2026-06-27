@@ -6,6 +6,7 @@ require_relative 'models/plan_history'
 require_relative 'models/recipe_stat'
 require_relative 'models/manual_addition'
 require_relative 'models/recurring_item'
+require_relative 'shopping'
 
 module Autochef
   # Telegram notification + approval bot for Mealie AutoChef.
@@ -166,12 +167,20 @@ module Autochef
       history.approved = 1
       history.save!
 
-      text = "✓ *Plan approved!*\n\nShopping list generation and cart building will run in Phase 4/5.\n" \
-             "_Use /list to see any manual additions._"
+      # Tell Bailey something is happening while we build the list.
       bot.api.edit_message_text(
-        chat_id: query.message.chat.id,
+        chat_id:    query.message.chat.id,
         message_id: query.message.message_id,
-        text: text,
+        text:       "✓ *Plan approved!*\n\n_Building shopping list..._",
+        parse_mode: 'Markdown'
+      )
+
+      result_text = build_shopping_list_for(history)
+
+      bot.api.edit_message_text(
+        chat_id:    query.message.chat.id,
+        message_id: query.message.message_id,
+        text:       result_text,
         parse_mode: 'Markdown'
       )
     end
@@ -737,6 +746,38 @@ module Autochef
       when 'every_n_days'  then "every #{item.cadence_value} days"
       else item.cadence_type
       end
+    end
+
+    # Run ShoppingListBuilder for an approved plan and return a formatted
+    # Telegram message string. Catches errors so a list-build failure doesn't
+    # crash the bot.
+    def build_shopping_list_for(history)
+      builder = ShoppingListBuilder.new(@cfg, mealie_client: @mealie)
+      result  = builder.build_and_push(history)
+
+      lines = ["✓ *Plan approved — shopping list pushed to Mealie!*", '']
+      lines << "#{result.recipe_items} recipe ingredient(s)"
+      lines << "#{result.recurring_count} recurring staple(s)" if result.recurring_count.positive?
+      lines << "#{result.manual_count} manual addition(s) consumed" if result.manual_count.positive?
+      lines << "#{result.pushed_count} total item(s) in _Next Order_"
+
+      if result.unmapped_items.any?
+        lines << ''
+        lines << "⚠️ *#{result.unmapped_items.size} unmapped ingredient(s) — no Food Lion product set:*"
+        result.unmapped_items.each { |name| lines << "  • #{name}" }
+        lines << "_Run `scripts/seed_product_map.rb` to map them before building the cart._"
+      end
+
+      if result.warnings.any?
+        lines << ''
+        result.warnings.each { |w| lines << "⚠ #{w}" }
+      end
+
+      lines.join("\n")
+    rescue StandardError => e
+      warn "ShoppingListBuilder error: #{e.class}: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
+      "✓ *Plan approved!*\n\n⚠️ Shopping list build failed: #{e.message.slice(0, 300)}\n" \
+        "_Plan is saved. Run `main.rb shop` to retry._"
     end
 
     # Push an item to the Mealie "Next Order" shopping list.

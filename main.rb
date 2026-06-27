@@ -8,6 +8,7 @@
 #   bundle exec ruby main.rb sync         # Phase 1: pull Mealie → recipe_stats
 #   bundle exec ruby main.rb plan         # Phase 2+3: generate plan + send Telegram draft
 #   bundle exec ruby main.rb serve        # Phase 3: long-running Telegram bot (approval + commands)
+#   bundle exec ruby main.rb shop         # Phase 4: build shopping list from approved plan
 #   bundle exec ruby main.rb build-cart   # Phase 5
 #   bundle exec ruby main.rb backup       # Phase 6
 
@@ -22,6 +23,8 @@ require_relative 'lib/autochef/models/recurring_item'
 require_relative 'lib/autochef/scoring'
 require_relative 'lib/autochef/planner'
 require_relative 'lib/autochef/llm_planner'
+require_relative 'lib/autochef/recurring'
+require_relative 'lib/autochef/shopping'
 require_relative 'lib/autochef/notify'
 
 def ping_uptime_kuma(push_url)
@@ -386,6 +389,65 @@ def cmd_serve
   0
 end
 
+def cmd_shop
+  puts '=== Mealie AutoChef — shop (Phase 4: build shopping list) ==='
+
+  begin
+    cfg = Autochef::Config.load
+  rescue StandardError => e
+    puts "Config load FAILED: #{e.message}"
+    return 1
+  end
+
+  begin
+    Autochef::Database.connect!
+    Autochef::Database.migrate!
+  rescue StandardError => e
+    puts "DB init/migrate FAILED: #{e.message}"
+    return 1
+  end
+
+  client = build_client(cfg)
+
+  begin
+    client.ping
+  rescue StandardError => e
+    puts "Cannot reach Mealie: #{e.message}"
+    puts 'Tip: set MEALIE_URL in .env or run inside Docker.'
+    return 1
+  end
+
+  history = Autochef::Models::PlanHistory.where(approved: 1).order(created_at: :desc).first
+  if history.nil?
+    puts 'No approved plan found. Run `main.rb plan` and approve it first.'
+    return 1
+  end
+
+  puts "Using approved plan id=#{history.id} (week of #{history.week_start})."
+
+  builder = Autochef::ShoppingListBuilder.new(cfg, mealie_client: client)
+  result  = builder.build_and_push(history)
+
+  puts "\n--- Shopping list pushed to Mealie \"#{cfg.mealie.next_order_list}\" ---"
+  puts "  #{result.recipe_items} recipe ingredient(s)"
+  puts "  #{result.recurring_count} recurring staple(s)" if result.recurring_count.positive?
+  puts "  #{result.manual_count} manual addition(s) consumed" if result.manual_count.positive?
+  puts "  #{result.pushed_count} total item(s) pushed"
+
+  if result.unmapped_items.any?
+    puts "\n⚠  #{result.unmapped_items.size} unmapped ingredient(s) — run seed_product_map.rb to map them:"
+    result.unmapped_items.each { |name| puts "     • #{name}" }
+  end
+
+  if result.warnings.any?
+    puts "\nWarnings:"
+    result.warnings.each { |w| puts "  ⚠  #{w}" }
+  end
+
+  ping_uptime_kuma(ENV.fetch('UPTIME_KUMA_PUSH_URL', ''))
+  result.unmapped_items.empty? ? 0 : 1
+end
+
 def not_implemented_yet(command)
   puts "`#{command}` is not implemented yet — it lands in a later build phase."
   puts 'See MEALIE_AUTOMATION_PLAN.md section 10 for the phase breakdown.'
@@ -404,10 +466,12 @@ def main
     cmd_sync
   when 'plan'
     cmd_plan(freeform_note: ARGV[1])
+  when 'shop'
+    cmd_shop
   when 'build-cart', 'backup'
     not_implemented_yet(command)
   when nil
-    puts 'Usage: ruby main.rb <check|sync|serve|plan|build-cart|backup>'
+    puts 'Usage: ruby main.rb <check|sync|serve|plan|shop|build-cart|backup>'
     1
   else
     puts "Unknown command: #{command}"

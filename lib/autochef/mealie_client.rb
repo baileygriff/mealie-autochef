@@ -134,6 +134,38 @@ module Autochef
       post("/api/groups/shopping/lists/#{list_id}/items", body)
     end
 
+    # Like add_shopping_list_item but marks the item with autochef_managed: true
+    # so clear_autochef_items can identify and remove it on re-push.
+    # food_id and label are optional Mealie food/label linkage.
+    def add_autochef_item(list_id, name:, quantity: 1, unit: nil, food_id: nil, label: nil, note: nil)
+      body = {
+        'shoppingListId' => list_id,
+        'note'           => name,
+        'quantity'       => quantity.to_f,
+        'extras'         => { 'autochef_managed' => 'true' }
+      }
+      body['unit']    = { 'name' => unit }    if unit
+      body['food']    = { 'id'   => food_id } if food_id
+      body['label']   = { 'name' => label }   if label
+      body['extras']['source_note'] = note     if note
+      post("/api/groups/shopping/lists/#{list_id}/items", body)
+    end
+
+    # Delete all items in a list that were created by autochef (extras.autochef_managed == 'true').
+    # Preserves manual adds and items entered through Mealie's own UI.
+    # Returns the count of deleted items.
+    def clear_autochef_items(list_id)
+      list  = shopping_list(list_id)
+      items = list['listItems'] || list['items'] || []
+
+      autochef_items = items.select do |item|
+        (item['extras'] || {})['autochef_managed'].to_s == 'true'
+      end
+
+      autochef_items.each { |item| remove_shopping_list_item(list_id, item['id']) }
+      autochef_items.size
+    end
+
     # DELETE /api/groups/shopping/lists/{list_id}/items/{item_id}
     def remove_shopping_list_item(list_id, item_id)
       resp = HTTParty.delete(
