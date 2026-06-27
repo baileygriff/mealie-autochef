@@ -3,6 +3,8 @@
 
 # Runtime state (never commit)
 data/autochef.db
+data/autochef.db-shm
+data/autochef.db-wal
 data/playwright_state.json
 data/PAUSE
 data/cart_screenshots/
@@ -24,3 +26,6 @@ venv/
 # Editors
 .vscode/
 .idea/
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
