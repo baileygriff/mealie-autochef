@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'date'
 require_relative 'models/recurring_item'
 require_relative 'models/plan_history'
 

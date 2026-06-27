@@ -8,6 +8,7 @@ data/autochef.db-wal
 data/playwright_state.json
 data/PAUSE
 data/cart_screenshots/
+data/backups/
 
 # Ruby
 *.gem
