@@ -597,7 +597,7 @@ def cmd_build_cart(force: false)
   end
 
   puts "Found #{raw_items.size} item(s) in Next Order."
-  cart_items = raw_items.map { |item| resolve_cart_item(item) }
+  cart_items = raw_items.filter_map { |item| resolve_cart_item(item) }
 
   # Build the input payload for cart.py.
   input = {
@@ -686,6 +686,8 @@ def resolve_cart_item(mealie_item)
   raw_name = mealie_item['note'].to_s.strip
   key      = raw_name.downcase.strip.gsub(/\s+/, ' ')
   mapping  = Autochef::Models::ProductMap.find_by(key: key)
+
+  return nil if mapping&.search_term == '__skip__'
 
   if mapping
     {

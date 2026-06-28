@@ -59,9 +59,13 @@ if mode == '--list'
     puts "#{mappings.count} product mapping(s):\n\n"
     mappings.each do |m|
       puts "  #{m.key}"
-      puts "    search: #{m.search_term}"
-      puts "    pack:   #{m.pack_size} #{m.pack_unit} × #{m.default_qty} (round #{m.rounding || 'up'})"
-      puts "    display: #{m.display_name}" if m.display_name.to_s.strip.length.positive?
+      if m.search_term == '__skip__'
+        puts "    (pantry staple — excluded from cart)"
+      else
+        puts "    search: #{m.search_term}"
+        puts "    pack:   #{m.pack_size} #{m.pack_unit} × #{m.default_qty} (round #{m.rounding || 'up'})"
+        puts "    display: #{m.display_name}" if m.display_name.to_s.strip.length.positive?
+      end
       puts
     end
   end
@@ -118,11 +122,25 @@ to_seed.each_with_index do |key, idx|
 
   existing = Autochef::Models::ProductMap.find_by(key: key)
   if existing && mode != '--update'
-    puts "  Already mapped (search: #{existing.search_term}) — skipping. Use --update to change."
+    label = existing.search_term == '__skip__' ? '(pantry — skipped)' : "search: #{existing.search_term}"
+    puts "  Already mapped (#{label}) — skipping. Use --update to change."
     next
   end
 
-  search_term  = prompt('  Search term on Food Lion', default: key)
+  puts "  Enter 's' to mark as a pantry staple (excluded from cart)."
+  search_term = prompt('  Search term on Food Lion', default: key)
+
+  if search_term.to_s.strip.downcase == 's'
+    record = Autochef::Models::ProductMap.find_or_initialize_by(key: key)
+    record.search_term = '__skip__'
+    record.default_qty = 1
+    record.rounding    = 'up'
+    record.save!
+    puts "  ✓ Marked as pantry staple — will be excluded from cart."
+    puts
+    next
+  end
+
   display_name = prompt('  Display name (blank = use food name)', default: nil)
   pack_size    = prompt('  Pack size (e.g. 16)', default: nil)&.to_f
   pack_unit    = prompt('  Pack unit (oz / lb / ct / ea)', default: 'ct')
