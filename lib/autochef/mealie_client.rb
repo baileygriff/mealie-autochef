@@ -100,7 +100,12 @@ module Autochef
     def ensure_tag(name)
       result = post('/api/organizers/tags', { 'name' => name })
       return result if result['slug']
-      # Already exists — find it
+      find_tag!(name)
+    rescue Error
+      find_tag!(name)
+    end
+
+    def find_tag!(name)
       paginate('/api/organizers/tags').find { |t| t['name'].casecmp?(name) } ||
         raise("Could not create or find tag: #{name}")
     end
