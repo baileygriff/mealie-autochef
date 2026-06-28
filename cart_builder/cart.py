@@ -218,6 +218,13 @@ SEL_CART_ITEM_REMOVE = [
     'button[aria-label*="Delete" i]',
 ]
 
+# "OK" / confirm button in the "Remove this item from your cart?" dialog
+SEL_CART_ITEM_REMOVE_CONFIRM = [
+    'button:has-text("OK")',
+    'button:has-text("Yes")',
+    'button:has-text("Confirm")',
+]
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -411,6 +418,9 @@ def clear_cart(page: Page) -> int:
             if els.count() > 0:
                 try:
                     els.first.click()
+                    pace(600)
+                    # Food Lion shows "Remove this item from your cart? [OK] [Cancel]"
+                    try_click(page, SEL_CART_ITEM_REMOVE_CONFIRM, timeout=2000)
                     pace(600)
                     removed += 1
                     found = True

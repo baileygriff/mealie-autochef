@@ -73,7 +73,7 @@ module Autochef
     # deviation_warning is an optional String from Safety#deviation_warning.
     def send_cart_ready(result, dry_run:, deviation_warning: nil, skipped_items: [])
       lines = ["*Cart ready✅*"]
-      lines[0] += ' _(dry run — cart built, no order placed)_' if dry_run
+      lines[0] += ' (dry run — cart built, no order placed)' if dry_run
       lines << ''
 
       if result['cart_total']
@@ -86,21 +86,21 @@ module Autochef
 
       if result['cart_url']
         lines << ''
-        lines << "[Open cart in Food Lion](#{result['cart_url']})"
+        lines << "Cart: #{result['cart_url']}"
       end
 
       if result['flagged_items']&.any?
         lines << ''
         lines << "*#{result['flagged_items'].size} item(s) could not be added ⚠️*"
         result['flagged_items'].each { |item| lines << "  • #{item}" }
-        lines << "_These were not substituted. Add them manually in the Food Lion app._"
+        lines << "These were not substituted. Add them manually in the Food Lion app."
       end
 
       if skipped_items.any?
         lines << ''
         lines << "*Pantry assumed on hand (#{skipped_items.size}) — verify stock:*"
         skipped_items.each { |n| lines << "  • #{n}" }
-        lines << "_Use /add <item> if you need to restock, then re-run build-cart --force_"
+        lines << "Use /add if you need to restock any, then re-run: build-cart --force"
       end
 
       if deviation_warning
@@ -110,12 +110,12 @@ module Autochef
 
       if result['screenshot_path']
         lines << ''
-        lines << "Screenshot: #{result['screenshot_path']}"
+        lines << "Screenshot: `#{result['screenshot_path']}`"
       end
 
       if dry_run
         lines << ''
-        lines << "_Review the cart in Food Lion To Go, then place the order manually._"
+        lines << "Review the cart in Food Lion To Go, then place the order manually."
       end
 
       bot_api.send_message(

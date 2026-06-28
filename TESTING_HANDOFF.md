@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (seventh session)
+## Current state as of 2026-06-28 (eighth session)
 
 ### What's been completed
 
@@ -113,7 +113,7 @@ mealie-autochef-ruby/
 | Telegram approval | ✓ | Plan id=4 approved |
 | `main.rb shop` | ✓ | 59 items pushed to Mealie "Next Order" |
 | `seed_product_map.rb` | ✓ | All items mapped or pantry-skipped |
-| `main.rb build-cart` | ✓ | 30/30 items added, $110.92 total, 0 flagged — verified end-to-end |
+| `main.rb build-cart` | ✓ | 24/24 items added (consolidated), $119.45 total, 0 flagged — `clear_cart()` confirmed working |
 | Week configurator (Sinatra form) | ✓ | Implemented + documented |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
@@ -293,6 +293,28 @@ Fix: script now fetches autochef-managed items directly from the live Mealie "Ne
 shopping list and uses their `note` text as the map key. This also aligns the key with
 what `resolve_cart_item` uses when looking up mappings during `build-cart`.
 File: `scripts/seed_product_map.rb`
+
+---
+
+## Bugs fixed — 2026-06-28 eighth session
+
+**`clear_cart()` never clicked the "Remove this item from your cart?" confirmation dialog**
+Food Lion shows an OK/Cancel confirmation after each trash-button click. `clear_cart()` incremented `removed` after clicking the trash button but never clicked OK, so no items were actually removed. On the first `build-cart --force` run, only 1 item was "cleared" but the cart was untouched — the 30 leftover items from the previous run plus 24 new items pushed the total to $312.66, which exceeded the $300 cap.
+Fix: added `SEL_CART_ITEM_REMOVE_CONFIRM = ['button:has-text("OK")', ...]` constant and a `try_click(page, SEL_CART_ITEM_REMOVE_CONFIRM, timeout=2000)` call inside the clear loop, immediately after the trash-button click. Verified: cleared 27–60 items correctly on subsequent runs.
+File: `cart_builder/cart.py`
+
+**Telegram Markdown parse errors in `send_cart_ready` (multiple root causes)**
+After the cart-ready message was sent, Telegram returned `400 Bad Request: Can't find end of the entity starting at byte offset N` on every run. Three separate causes:
+
+1. `_Use /add <item>...--force_` — the closing `_` was adjacent to the alphanumeric `e` in `force`, which Telegram Markdown v1 doesn't recognize as a closing italic marker. The entity was left open.
+2. `[Open cart in Food Lion](url)` — the actual cart URL (captured from `page.url` after clicking the cart icon) contains underscores in query parameters. Underscores in `[text](url_with_underscores)` break Markdown v1 link parsing.
+3. `Screenshot: data/cart_screenshots/autochef-...png` — `cart_screenshots` contains `_`, which Telegram v1 parses as an italic-open entity that's never closed.
+
+Fix:
+- Removed all `_..._` italic markers from `send_cart_ready` hint lines (plain text is fine; `*bold*` retained).
+- Converted cart URL from `[Open cart in Food Lion](url)` to `Cart: url` (plain text).
+- Wrapped screenshot path in backticks: `` Screenshot: `data/cart_screenshots/...` `` — underscores inside code spans are not parsed as Markdown.
+File: `lib/autochef/notify.rb`
 
 ---
 
@@ -494,34 +516,258 @@ bundle exec ruby scripts/seed_product_map.rb
 
 ## What's coming next (in order)
 
-1. **Verify cart clearing on next `build-cart --force`** — `clear_cart()` uses Instacart-UI selectors that haven't been confirmed against the live site yet. Watch the browser on the next run: the cart should empty before items are added. If the selectors miss, add the correct ones to `SEL_CART_ITEM_REMOVE` in `cart.py`. Playwright Codegen: `playwright codegen https://www.foodlion.com/shop` → interact with the Remove button.
+1. ~~**Verify cart clearing**~~ — **DONE** (eighth session). `clear_cart()` confirmed working: cleared 27–60 items including the OK confirmation dialog. Selectors verified live.
 
-2. **Enhancement 2 — LLM quantity consolidation** — Bailey wants smart grocery consolidation: "2 recipes both need a squeeze of lemon juice → 1 lemon". Implementation plan:
-   - After `main.rb shop` pushes items to Mealie "Next Order", a small Claude Haiku call receives the raw ingredient list + quantities and outputs a consolidated, human-like shopping list (respecting pack sizes and real-world units)
-   - Input: array of `{name, quantity, unit}` from the Mealie list
-   - Output: array of `{search_term, qty, unit, rationale}` replacing the raw list
-   - The consolidated list feeds directly into cart.py's `items` payload (bypassing `resolve_cart_item` which currently does the literal lookup)
-   - Alternatively: run consolidation before cart.py is called, treating the resolved `cart_items` as the input and having Haiku merge/rationalize quantities
-   - **Decision needed:** where in the pipeline to inject this — pre-shop (Mealie list) or post-resolve (cart items before cart.py). Post-resolve is lower risk since the product map is already applied.
+2. **Enhancement 2 — LLM quantity consolidation** — smart grocery consolidation: "2 recipes both need a squeeze of lemon juice → 1 lemon". Post-resolve injection (after `resolve_cart_item` runs) — Haiku receives resolved `cart_items` and merges/rationalizes quantities respecting real-world pack sizes. Lower risk than pre-shop injection since the product map is already applied.
 
-3. **LLM tagging / auto product mapping experiment** — Instead of manually seeding `search_term`, `default_qty`, `pack_unit` via `seed_product_map.rb`, have Claude Haiku auto-suggest these values given the ingredient name, then verify each suggestion against live Food Lion search results via Playwright. This would drastically reduce the manual seeding burden for new recipes.
-   - Rough plan: new script `scripts/auto_map.rb` → calls Haiku to suggest `search_term`/qty/unit → invokes a Playwright search to confirm the product exists → writes to `product_map`
-   - Falls back to the interactive `seed_product_map.rb` prompt for anything Haiku can't confidently map
+3. **LLM tagging / auto product mapping** — `scripts/auto_map.rb`: Haiku suggests `search_term`/qty/unit for new ingredients → Playwright confirms the product exists on Food Lion → writes to `product_map`. Falls back to interactive `seed_product_map.rb` prompt for anything Haiku can't confidently map.
 
-4. **Post-build cart review** — check the Food Lion cart manually (link in the Telegram message). Note any items that resolved to the wrong product and fix their search terms via `seed_product_map.rb --update`.
+4. **Post-build cart review** — check the Food Lion cart manually. Note any items that resolved to the wrong product and fix their search terms via `seed_product_map.rb --update`.
 
-5. **Docker deployment** on Unraid — after stable local operation confirmed
+5. **Telegram UX improvements** (three items, see full spec below):
+   - Food Lion link should open the native app, not Telegram browser
+   - `/shop` bot command to trigger a cart rebuild from Telegram (replaces the "re-run CLI" hint)
+   - Screenshot should be sent as a Telegram photo, not a plain text path
 
-6. **Uptime Kuma push monitor** — Bailey creates a Push monitor in Kuma at 192.168.1.64:3001; paste the push URL into `.env` as `UPTIME_KUMA_PUSH_URL`
+6. **Recipe Sleep feature** — see full spec below.
 
-7. **MCP setup** — Docker MCP server so Claude Code can manage containers directly
+7. **LLM Recipe Suggestions (`/newrecipes`)** — see full spec below.
 
-### cart.py state as of this session
+8. **Debug screenshots** — see spec below.
+
+8. **Docker deployment** on Unraid — after stable local operation confirmed
+
+9. **Uptime Kuma push monitor** — Bailey creates a Push monitor in Kuma at 192.168.1.64:3001; paste the push URL into `.env` as `UPTIME_KUMA_PUSH_URL`
+
+10. **MCP setup** — Docker MCP server so Claude Code can manage containers directly
+
+---
+
+## Feature spec: Recipe Sleep
+
+Allow Bailey to put a recipe to sleep from the plan approval or swap flow. Sleeping recipes are excluded from the eligible pool until the sleep expires.
+
+### Sleep duration progression
+
+Each recipe tracks how many times it has been slept (`sleep_count`). Duration increases per sleep:
+
+| `sleep_count` before this sleep | Duration |
+|---|---|
+| 0 | 2 weeks |
+| 1 | 4 weeks |
+| 2 | 16 weeks |
+| 3 | 32 weeks |
+| 4+ | 52 weeks (cap — recipe always returns within a year) |
+
+Reset: clears `sleep_count` to 0 and `sleep_until` to nil for a specific recipe. Available via `/sleeping` command.
+
+### DB changes (new migration 010)
+
+Add to `recipe_stats`:
+- `sleep_until` DATE nullable — date when the sleep expires (nil = not sleeping)
+- `sleep_count` INTEGER NOT NULL DEFAULT 0 — how many times this recipe has been slept
+
+### Eligibility check
+
+In `scorer.rb` / `planner.rb`: exclude any `RecipeStat` where `sleep_until IS NOT NULL AND sleep_until > Date.today`.
+
+### Bot flow
+
+**In plan approval message** — add a Sleep button per recipe alongside the existing Swap button. Inline keyboard layout per recipe:
+```
+[✅ Keep] [🔁 Swap] [😴 Sleep]
+```
+
+**In swap flow** — when Bailey taps Swap on a recipe, present Sleep as the first option before swap candidates:
+```
+[😴 Sleep this recipe instead] [Swap candidate 1] [Swap candidate 2] ...
+```
+
+**After tapping Sleep:**
+- Compute duration from `sleep_count`
+- Set `sleep_until = Date.today + duration_days`
+- Increment `sleep_count`
+- Auto-swap the slept recipe with the next best candidate
+- Bot replies: "😴 [Recipe] sleeping for N weeks (returns [date]). Swapped with [replacement]."
+
+### `/sleeping` Telegram command
+
+Lists all currently sleeping recipes:
+```
+*Sleeping recipes:*
+  • Greek Salmon — wakes up Thu Jul 30 (2 wks, sleep #1)
+  [Reset]
+```
+The Reset button on each entry clears `sleep_until` and `sleep_count` for that recipe.
+
+### Key files to create/modify
+
+- `lib/autochef/database.rb` — migration 010 (`sleep_until`, `sleep_count` columns)
+- `lib/autochef/models/recipe_stat.rb` — add `sleep_duration_weeks` helper + eligibility scope
+- `lib/autochef/scorer.rb` — filter out sleeping recipes before scoring
+- `lib/autochef/notify.rb` — Sleep buttons in plan message + swap flow; `/sleeping` response
+- `main.rb` — `cmd_sleeping`; callback handlers for `sleep_recipe`, `reset_sleep`
+- `config.yaml` / `lib/autochef/config.rb` — no change needed (progression is hardcoded in RecipeStat)
+
+---
+
+## Feature spec: LLM Recipe Suggestions (`/newrecipes`)
+
+Bailey can trigger a new-recipe suggestion round from Telegram at any time. The LLM looks at what Bailey likes and finds 3 new recipes — using web search when possible, falling back to generation.
+
+### Context sent to LLM
+
+Pull from DB + Mealie:
+- Recipes with `times_planned >= 2` OR Mealie `rating >= 4` OR positive feedback score → "liked" recipes
+- Their cuisine, protein, effort, tags from Mealie
+- The current recipe pool (to avoid re-suggesting something already in Mealie)
+
+Build a context summary: "Here are recipes Bailey likes and has made often: [list with metadata]. He tends toward [cuisines]. Suggest 3 new complementary recipes he hasn't tried."
+
+### LLM call
+
+- **Model**: Claude Sonnet (has `web_search` tool support)
+- **Web search**: try first → find real recipe URLs from reputable sources (Serious Eats, NYT Cooking, The Food Lab, AllRecipes)
+- **Fallback**: if web search returns nothing or fails, generate recipe ideas from training data (mark `source: generated`)
+- **Output per suggestion**: `{name, source_url | null, description (2 sentences), why_it_fits}`
+
+### Telegram flow
+
+Bot sends one message per suggestion:
+```
+*[Recipe Name]*
+[2-sentence description]
+Source: [URL] — or — Generated by Claude
+Why it fits: [brief rationale]
+
+[✅ Import] [❌ Skip] [💬 Feedback]
+```
+
+- **✅ Import**: calls Mealie import flow (POST to create by name → PATCH with auto-plan tag + metadata → `main.rb sync` equivalent). Notifies: "✅ [Recipe] added to Mealie and tagged auto-plan."
+- **❌ Skip**: records skip in DB + text log with no comment.
+- **💬 Feedback**: bot prompts "What didn't you like about this suggestion?" → records text response in DB + text log.
+
+### Feedback storage
+
+**DB table `recipe_suggestion_feedback`** (new migration 011):
+- `id`, `recipe_name`, `source_url`, `action` (imported/skipped/feedback), `feedback_text`, `suggested_at`, `acted_at`
+
+**Text export `data/suggestion_feedback.txt`**: append-only log, one line per action:
+```
+2026-07-01 | Greek Chicken Bowl | https://... | skipped | "not a fan of bowl meals"
+```
+
+Text file is easy to attach when handing off to a new agent.
+
+**Future LLM context**: when `/newrecipes` is called, include the last N feedback entries in the prompt so the LLM can refine suggestions over time.
+
+### Key files to create/modify
+
+- `lib/autochef/llm_recipe_suggester.rb` — new file: builds context, calls Claude API with web search tool, parses suggestions
+- `lib/autochef/models/recipe_suggestion_feedback.rb` — new AR model
+- `lib/autochef/database.rb` — migration 011 (`recipe_suggestion_feedback` table)
+- `lib/autochef/notify.rb` — new `send_recipe_suggestions` method; suggestion message + buttons
+- `main.rb` — `cmd_newrecipes`; bot command handler for `/newrecipes`; callbacks for `import_suggestion`, `skip_suggestion`, `feedback_suggestion`
+- `data/suggestion_feedback.txt` — auto-created on first feedback action
+
+---
+
+## Feature spec: Debug screenshots
+
+Take screenshots at each meaningful step of the cart build (not video — lower memory, no duplicate frames, directly Claude-analyzable). Keep a rolling window of the last 2 full run directories.
+
+### Screenshots to capture (in order)
+
+1. After `navigate_to_store` + modal dismissal — confirm we're on the right page
+2. After `clear_cart` — confirm cart is empty
+3. After `set_pickup_mode` — confirm pickup tab active
+4. After each `add_item_to_cart` success — confirm item appeared in cart count / cart area
+5. After `capture_cart_summary` — the final cart view (same as current `run_key.png`)
+6. On any exception — error screenshot (already exists)
+
+### Implementation
+
+In `run_build_cart()`, pass a `debug_dir` path to each step function. Screenshot each step:
+```python
+debug_dir = SCREENSHOT_DIR / run_key
+debug_dir.mkdir(parents=True, exist_ok=True)
+page.screenshot(path=str(debug_dir / "01_store_loaded.png"))
+```
+
+Rolling window: at the start of `run_build_cart()`, list all subdirectories of `SCREENSHOT_DIR` sorted by mtime. If more than 1 exists, delete the oldest (keeps 2).
+
+The final summary screenshot (`run_key.png`) remains as-is for the Telegram notification.
+
+**Env var** `DEBUG_SCREENSHOTS_PATH`: if set, rsync or copy the debug run directory to that path on Unraid after the run completes.
+
+### Accessing screenshots for Claude analysis
+
+Screenshots are in `data/cart_screenshots/{run_key}/`. To review with Claude: share each image file from the most recent run. Claude can read any `.png` directly.
+
+Add `main.rb debug-screenshots` (or just `ls data/cart_screenshots/` instructions) to list available debug runs.
+
+### Key files to modify
+
+- `cart_builder/cart.py` — `run_build_cart()` (per-step screenshots, rolling cleanup, optional copy to `DEBUG_SCREENSHOTS_PATH`)
+- `.env.example` — document `DEBUG_SCREENSHOTS_PATH`
+
+---
+
+## Enhancement: Telegram UX improvements
+
+Three UX issues surfaced from live testing:
+
+### 1. Food Lion link opens Telegram browser, not the app
+
+The cart-ready message currently sends `Cart: https://foodlion.com/shop` as plain text. Even as a tappable URL, Telegram opens it in its in-app browser, not the Food Lion app.
+
+Fix: send as a proper Markdown hyperlink. Food Lion's app uses Universal Links (`https://www.foodlion.com`) — iOS/Android will route the tap to the native app if installed. Hardcode the URL to `https://www.foodlion.com/shop` (no underscores → safe in Markdown v1):
+```ruby
+lines << "[Open cart in Food Lion To Go](https://www.foodlion.com/shop)"
+```
+File: `lib/autochef/notify.rb`
+
+### 2. "re-run build-cart --force" is not actionable from Telegram
+
+The pantry hint currently says "then re-run: build-cart --force" — Bailey can't run CLI commands from his phone. Replace with a `/shop` bot command.
+
+**`/shop` command** — rebuilds the cart from the current Mealie "Next Order" list. Flow:
+1. Bailey taps `/add <item>` in Telegram (already works) for any pantry restocks
+2. Bailey sends `/shop` in Telegram
+3. Bot replies immediately: "Cart rebuild started — this takes a few minutes."
+4. Bot spawns `bundle exec ruby main.rb build-cart --force` as a background subprocess
+5. When done, the normal `send_cart_ready` notification fires (already implemented)
+
+Implementation in `notify.rb`'s `handle_message`:
+```ruby
+when /^\/shop(\s|$)/
+  bot.api.send_message(chat_id: update.chat.id, text: "Cart rebuild started...")
+  Thread.new { system("cd #{project_root} && bundle exec ruby main.rb build-cart --force") }
+```
+Update pantry hint message: `"Use /add <item> to restock pantry staples, then send /shop to rebuild the cart."`
+Files: `lib/autochef/notify.rb`, `main.rb`
+
+### 3. Screenshot path is plain text — not useful in Telegram
+
+`Screenshot: \`data/cart_screenshots/autochef-...\`` is a local server path that Bailey can't open from his phone. Replace with an actual Telegram photo upload.
+
+Fix: after sending the text cart-ready message, call `bot_api.send_photo` with the screenshot file:
+```ruby
+if result['screenshot_path'] && File.exist?(result['screenshot_path'])
+  bot_api.send_photo(chat_id: @chat_id, photo: Faraday::UploadIO.new(result['screenshot_path'], 'image/png'), caption: "Cart as of #{run_key}")
+end
+```
+Remove the `Screenshot: \`...\`` text line from the message entirely.
+File: `lib/autochef/notify.rb`
+
+---
+
+### cart.py state as of eighth session
 
 - `headless=False` — headed Chrome required; Food Lion blocks headless
-- `clear_cart()` — runs after page load, before items are added; clears all existing cart items; uses `SEL_CART_ITEM_REMOVE` (not confirmed against live UI yet — verify on next run)
+- `clear_cart()` — **confirmed working**: cleared 27–60 items on live runs; includes `SEL_CART_ITEM_REMOVE_CONFIRM` click for the OK confirmation dialog
 - `dismiss_modals()` — backdrop click at (10,10); called at startup AND before each Add click
-- `SEL_ADD_BTN` — confirmed working: matched `text='Add to cart'` on all 30 items in the verified run
+- `SEL_ADD_BTN` — confirmed working: matched `text='Add to cart'` on all 24 items in the verified run
 - `playwright_state.json` — refreshed with full auth + 2FA on 2026-06-28; will eventually expire
 
 ### If Food Lion session expires
