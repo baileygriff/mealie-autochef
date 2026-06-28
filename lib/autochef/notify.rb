@@ -7,6 +7,7 @@ require_relative 'models/recipe_stat'
 require_relative 'models/manual_addition'
 require_relative 'models/recurring_item'
 require_relative 'shopping'
+require_relative 'sinatra_prefs_source'
 
 module Autochef
   # Telegram notification + approval bot for Mealie AutoChef.
@@ -39,9 +40,9 @@ module Autochef
 
     # Send the plan draft for plan_history_id to Telegram and return.
     # Called from main.rb plan (one-shot, no polling loop needed).
-    def send_draft(plan_history_id:)
+    def send_draft(plan_history_id:, note: nil)
       history = Models::PlanHistory.find(plan_history_id)
-      text, keyboard = build_plan_message(history)
+      text, keyboard = build_plan_message(history, note: note)
       bot_api.send_message(
         chat_id: @chat_id,
         text: text,
@@ -250,6 +251,13 @@ module Autochef
       history.approved = 1
       history.save!
 
+      # Stamp last_planned now that the plan is committed — not on draft save.
+      history.plan.each_value do |entry|
+        stat = Models::RecipeStat.find_or_initialize_by(recipe_id: entry['recipe_id'])
+        stat.last_planned = history.week_start
+        stat.save!
+      end
+
       # Tell Bailey something is happening while we build the list.
       bot.api.edit_message_text(
         chat_id:    query.message.chat.id,
@@ -387,12 +395,44 @@ module Autochef
                      .limit(4)
                      .map(&:plan)
 
+      # Apply week prefs (same logic as cmd_plan in main.rb).
+      prefs_source       = SinatraPrefsSource.new
+      week_start_date    = history.week_start.to_date
+      week_prefs         = prefs_source.fetch(week_start_date)
+      layout_overrides   = {}
+      servings_overrides = {}
+      combined_note      = freeform_note
+
+      if week_prefs
+        week_prefs.protein_excludes.each do |excluded|
+          pool.reject! { |r| (r['tags'] || []).any? { |t| t['name'] == "protein:#{excluded}" } }
+        end
+
+        week_prefs.days.each do |date_str, dp|
+          date = Date.parse(date_str.to_s)
+          layout_overrides[date]   = dp if dp.meal_type
+          servings_overrides[date] = dp.dinner&.servings if dp.dinner&.servings
+        end
+
+        vibe_notes = week_prefs.days.filter_map do |date_str, dp|
+          next unless dp.dinner
+          label = dp.dinner.vibe == 'treat' ? 'Treat meal' : nil
+          note  = dp.dinner.note.to_s.strip
+          next unless label || !note.empty?
+          "#{Date.parse(date_str.to_s).strftime('%a')} #{[label, note].compact.join(': ')}"
+        end
+        parts = [week_prefs.freeform_note, *vibe_notes].reject(&:empty?)
+        combined_note = parts.any? ? parts.join('. ') : freeform_note
+      end
+
       result  = @llm_planner.plan(
-        pool:          pool,
-        scored_ids:    scored_ids,
-        week_start:    history.week_start.to_date,
-        freeform_note: freeform_note,
-        recent_plans:  recent_plans
+        pool:               pool,
+        scored_ids:         scored_ids,
+        week_start:         week_start_date,
+        freeform_note:      combined_note,
+        recent_plans:       recent_plans,
+        layout_overrides:   layout_overrides,
+        servings_overrides: servings_overrides
       )
       plan = result.week_plan
 
@@ -415,7 +455,6 @@ module Autochef
       plan.assignments.each do |a|
         stat = Models::RecipeStat.find_or_initialize_by(recipe_id: a.recipe_id)
         stat.times_planned = stat.times_planned.to_i + 1
-        stat.last_planned  = plan.week_start
         stat.save!
       end
 
@@ -695,6 +734,16 @@ module Autochef
       lines << '' << "_#{note}_" if note
 
       keyboard_rows = []
+
+      if @cfg.respond_to?(:web) && @cfg.web&.enabled
+        web_url = "http://#{@cfg.web.host}:#{@cfg.web.port}/week"
+        keyboard_rows << [
+          Telegram::Bot::Types::InlineKeyboardButton.new(
+            text: '⚙ Configure week', url: web_url
+          )
+        ]
+      end
+
       keyboard_rows << [
         Telegram::Bot::Types::InlineKeyboardButton.new(
           text: '✓ Approve', callback_data: "approve:#{history.id}"

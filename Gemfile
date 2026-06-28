@@ -24,6 +24,11 @@ gem 'rufus-scheduler', '~> 3.9'
 # YAML config — yaml is stdlib in modern Ruby, no gem needed; left as a comment
 # for visibility: `require "yaml"` is built in.
 
+# Week configurator web form
+gem 'sinatra', '~> 4.0'
+gem 'sinatra-contrib', '~> 4.0'
+gem 'puma', '~> 6.0'
+
 group :development, :test do
   gem 'rspec', '~> 3.13'
   gem 'rubocop', '~> 1.65', require: false

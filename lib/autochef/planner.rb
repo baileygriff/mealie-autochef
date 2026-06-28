@@ -49,17 +49,28 @@ module Autochef
 
     # Build a deterministic plan for the week whose pickup day is week_start.
     #
-    # pool       — Array of recipe hashes from MealieClient#eligible_pool,
-    #              each decorated with "perishability" (Integer).
-    # scored_ids — { recipe_id => Float } from Scorer. Missing → 0.
+    # pool             — Array of recipe hashes from MealieClient#eligible_pool,
+    #                    each decorated with "perishability" (Integer).
+    # scored_ids       — { recipe_id => Float } from Scorer. Missing → 0.
+    # layout_overrides — { Date => DayPrefs } from week prefs form — overrides meal_type per day.
+    # servings_overrides — { Date => Integer } — per-day servings from week prefs.
     #
     # Returns a WeekPlan.
-    def plan(pool:, scored_ids:, week_start: next_week_start)
+    def plan(pool:, scored_ids:, week_start: next_week_start,
+             layout_overrides: {}, servings_overrides: {})
       warnings = []
       layout   = @cfg.meals.week_layout
 
       # 1. Cook days and their dates, in calendar order.
       cook_dates = dates_of_type(layout, 'cook', week_start)
+
+      # Apply layout_overrides: remove skipped days, reclassify overridden types.
+      if layout_overrides.any?
+        cook_dates.reject! do |d|
+          override = layout_overrides[d]
+          override && override.meal_type.to_s == 'skip'
+        end
+      end
 
       # Dates that immediately precede a leftover day → need makes-leftovers recipe.
       leftover_dates       = dates_of_type(layout, 'leftover', week_start).to_set
@@ -98,7 +109,8 @@ module Autochef
           recipe = pick_one(makes_leftovers_pool, used_ids: used_ids, variety: variety)
           if recipe
             record_pick(recipe, used_ids, variety)
-            assignments << build_assignment(recipe, date: date, servings: default_servings,
+            servings = servings_overrides[date] || default_servings
+            assignments << build_assignment(recipe, date: date, servings: servings,
                                                     meal_type: meal_type)
           else
             warnings << "#{fmt_date(date)}: no makes-leftovers recipe available " \
@@ -126,7 +138,8 @@ module Autochef
           next
         end
         record_pick(recipe, used_ids, variety)
-        assignments << build_assignment(recipe, date: date, servings: default_servings,
+        servings = servings_overrides[date] || default_servings
+        assignments << build_assignment(recipe, date: date, servings: servings,
                                                 meal_type: meal_type)
       end
 

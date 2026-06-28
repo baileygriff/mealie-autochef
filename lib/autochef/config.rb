@@ -160,9 +160,16 @@ module Autochef
     end
   end
 
+  class WebConfig < ValidatedStruct
+    attr_reader :enabled, :port, :host
+
+    validates :port, numericality: { greater_than: 0, only_integer: true }
+    validates :host, presence: true
+  end
+
   class Config
     attr_reader :mealie, :store, :schedule, :meals, :selection,
-                :nutrition, :llm, :notify, :safety
+                :nutrition, :llm, :notify, :safety, :web
 
     def self.load(config_path: DEFAULT_CONFIG_PATH, env_path: DEFAULT_ENV_PATH)
       unless File.exist?(config_path)
@@ -201,6 +208,7 @@ module Autochef
       @llm = LLMConfig.new(raw[:llm])
       @notify = NotifyConfig.new(raw[:notify])
       @safety = SafetyConfig.new(raw[:safety])
+      @web = WebConfig.new(raw[:web] || { port: 3456, host: '0.0.0.0', enabled: false })
     end
 
     private

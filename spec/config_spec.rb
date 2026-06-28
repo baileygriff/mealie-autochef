@@ -69,11 +69,17 @@ RSpec.describe Autochef::Config do
     YAML
   end
 
+  # Returns [config_path, empty_env_path, tmpdir].
+  # Using a real (empty) env file prevents Dotenv.load (no-arg) from
+  # loading the project's .env during tests, which would inject MEALIE_URL
+  # and override fixture values.
   def write_config(yaml_str)
-    dir  = Dir.mktmpdir
-    path = File.join(dir, 'config.yaml')
+    dir      = Dir.mktmpdir
+    path     = File.join(dir, 'config.yaml')
+    env_path = File.join(dir, '.env')
     File.write(path, yaml_str)
-    [path, dir]
+    File.write(env_path, '')
+    [path, env_path, dir]
   end
 
   around(:each) do |example|
@@ -83,12 +89,14 @@ RSpec.describe Autochef::Config do
       'MEALIE_API_TOKEN'   => ENV['MEALIE_API_TOKEN'],
       'ANTHROPIC_API_KEY'  => ENV['ANTHROPIC_API_KEY'],
       'TELEGRAM_BOT_TOKEN' => ENV['TELEGRAM_BOT_TOKEN'],
-      'TELEGRAM_CHAT_ID'   => ENV['TELEGRAM_CHAT_ID']
+      'TELEGRAM_CHAT_ID'   => ENV['TELEGRAM_CHAT_ID'],
+      'MEALIE_URL'         => ENV['MEALIE_URL']
     }
     ENV['MEALIE_API_TOKEN']   = 'test-token'
     ENV['ANTHROPIC_API_KEY']  = 'sk-test'
     ENV['TELEGRAM_BOT_TOKEN'] = 'bot-test'
     ENV['TELEGRAM_CHAT_ID']   = '12345'
+    ENV.delete('MEALIE_URL')  # ensure YAML value is used, not the local-dev .env override
 
     example.run
   ensure
@@ -97,9 +105,9 @@ RSpec.describe Autochef::Config do
 
   describe '.load' do
     it 'loads a valid config without raising' do
-      path, dir = write_config(valid_yaml)
+      path, env_path, dir = write_config(valid_yaml)
       cfg = nil
-      expect { cfg = Autochef::Config.load(config_path: path, env_path: '/nonexistent/.env') }
+      expect { cfg = Autochef::Config.load(config_path: path, env_path: env_path) }
         .not_to raise_error
       FileUtils.rm_rf(dir)
 
@@ -116,32 +124,32 @@ RSpec.describe Autochef::Config do
     it 'raises ConfigError when a required key is missing (empty url)' do
       # Replace url value with empty string — presence: true catches it
       bad_yaml = valid_yaml.gsub('url: "http://mealie:9000"', 'url: ""')
-      path, dir = write_config(bad_yaml)
-      expect { Autochef::Config.load(config_path: path, env_path: '/nonexistent/.env') }
+      path, env_path, dir = write_config(bad_yaml)
+      expect { Autochef::Config.load(config_path: path, env_path: env_path) }
         .to raise_error(Autochef::ConfigError)
       FileUtils.rm_rf(dir)
     end
 
     it 'raises ConfigError for an invalid fulfillment value' do
       bad_yaml = valid_yaml.gsub('fulfillment: "pickup"', 'fulfillment: "delivery"')
-      path, dir = write_config(bad_yaml)
-      expect { Autochef::Config.load(config_path: path, env_path: '/nonexistent/.env') }
+      path, env_path, dir = write_config(bad_yaml)
+      expect { Autochef::Config.load(config_path: path, env_path: env_path) }
         .to raise_error(Autochef::ConfigError, /fulfillment/i)
       FileUtils.rm_rf(dir)
     end
 
     it 'raises ConfigError for an invalid week_layout day type' do
       bad_yaml = valid_yaml.gsub('Sun: cook', 'Sun: feast')
-      path, dir = write_config(bad_yaml)
-      expect { Autochef::Config.load(config_path: path, env_path: '/nonexistent/.env') }
+      path, env_path, dir = write_config(bad_yaml)
+      expect { Autochef::Config.load(config_path: path, env_path: env_path) }
         .to raise_error(Autochef::ConfigError, /week layout/i)
       FileUtils.rm_rf(dir)
     end
 
     it 'overrides mealie.url from MEALIE_URL env var' do
       ENV['MEALIE_URL'] = 'http://localhost:9000'
-      path, dir = write_config(valid_yaml)
-      cfg = Autochef::Config.load(config_path: path, env_path: '/nonexistent/.env')
+      path, env_path, dir = write_config(valid_yaml)
+      cfg = Autochef::Config.load(config_path: path, env_path: env_path)
       FileUtils.rm_rf(dir)
       expect(cfg.mealie.url).to eq('http://localhost:9000')
     ensure

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Week Configurator — <%= @week_start.strftime('%b %-d') %></title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           background: #f5f5f5; color: #222; padding: 16px; font-size: 16px; }
+    h1 { font-size: 1.3rem; margin-bottom: 4px; }
+    .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 20px; }
+    .day-card { background: #fff; border-radius: 10px; padding: 14px 16px;
+                margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+    .day-header { font-weight: 600; font-size: 1rem; margin-bottom: 10px; }
+    .day-date { font-weight: 400; color: #555; font-size: 0.9rem; }
+    .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+    .label { font-size: 0.85rem; color: #555; min-width: 54px; }
+    .radio-group { display: flex; gap: 6px; }
+    .radio-group label { display: flex; align-items: center; gap: 4px;
+                         padding: 6px 12px; border: 1px solid #ccc; border-radius: 20px;
+                         cursor: pointer; font-size: 0.85rem; user-select: none; }
+    .radio-group input[type=radio] { display: none; }
+    .radio-group input[type=radio]:checked + span { font-weight: 600; }
+    .radio-group label:has(input:checked) { background: #e8f0fe; border-color: #3a7af5; }
+    select, input[type=number], input[type=text] {
+      border: 1px solid #ccc; border-radius: 6px; padding: 6px 8px;
+      font-size: 0.9rem; background: #fff; }
+    input[type=number] { width: 60px; }
+    input[type=text] { flex: 1; min-width: 120px; }
+    .lunch-toggle { display: flex; align-items: center; gap: 6px;
+                    font-size: 0.85rem; color: #555; cursor: pointer; }
+    .lunch-toggle input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
+    .lunch-section { margin-top: 6px; padding: 10px 12px; background: #f9f9f9;
+                     border-radius: 8px; display: none; }
+    .lunch-section.visible { display: block; }
+    .section-title { font-size: 0.8rem; font-weight: 600; color: #888;
+                     text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+    .global-card { background: #fff; border-radius: 10px; padding: 14px 16px;
+                   margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+    .chip-group { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    .chip-group label { display: flex; align-items: center; gap: 5px;
+                        padding: 6px 14px; border: 1px solid #ccc; border-radius: 20px;
+                        cursor: pointer; font-size: 0.85rem; user-select: none; }
+    .chip-group input[type=checkbox] { display: none; }
+    .chip-group label:has(input:checked) { background: #fde8e8; border-color: #d93025; }
+    textarea { width: 100%; border: 1px solid #ccc; border-radius: 6px; padding: 8px;
+               font-size: 0.9rem; font-family: inherit; resize: vertical; min-height: 70px; }
+    .submit-btn { display: block; width: 100%; padding: 14px;
+                  background: #3a7af5; color: #fff; border: none; border-radius: 10px;
+                  font-size: 1rem; font-weight: 600; cursor: pointer; margin-top: 8px; }
+    .submit-btn:active { background: #2b66d1; }
+    .skip-notice { font-size: 0.8rem; color: #999; font-style: italic; margin-top: 4px; }
+  </style>
+  <script>
+    function toggleLunch(cb, sectionId) {
+      document.getElementById(sectionId).className =
+        'lunch-section' + (cb.checked ? ' visible' : '');
+    }
+  </script>
+</head>
+<body>
+
+<h1>Week of <%= @week_start.strftime('%A, %B %-d') %></h1>
+<p class="subtitle">Adjust plan preferences before generating. Leave unchanged to use config defaults.</p>
+
+<form method="POST" action="/week">
+
+  <!-- Global controls -->
+  <div class="global-card">
+    <div class="section-title">Protein Excludes</div>
+    <div class="chip-group">
+      <% existing_excludes = @existing&.protein_excludes || [] %>
+      <% [['seafood','No Seafood'], ['beef','No Beef'], ['pork','No Pork'], ['vegetarian_only','Vegetarian only']].each do |val, label| %>
+        <label>
+          <input type="checkbox" name="protein_excludes[]" value="<%= val %>"
+                 <%= existing_excludes.map(&:to_s).include?(val) ? 'checked' : '' %>>
+          <%= label %>
+        </label>
+      <% end %>
+    </div>
+
+    <div style="margin-top:14px;">
+      <div class="section-title">Week Note (goes to AI planner)</div>
+      <textarea name="freeform_note" placeholder="e.g. light week, no spicy food, want a freezer meal…"><%= @existing&.freeform_note %></textarea>
+    </div>
+  </div>
+
+  <!-- Per-day rows -->
+  <% order = %w[Sun Mon Tue Wed Thu Fri Sat] %>
+  <% layout = @cfg.meals.week_layout %>
+  <% default_servings = @cfg.meals.default_servings %>
+
+  <% order.each do |day_name| %>
+    <% day_sym = day_name.to_sym %>
+    <% config_type = (layout[day_sym] || layout[day_name]).to_s %>
+    <% next if config_type == 'out' %>
+
+    <%
+      # Compute the date for this day in the target week
+      wday_order = %w[Sun Mon Tue Wed Thu Fri Sat]
+      offset = wday_order.index(day_name)
+      date = @week_start + offset
+      date_str = date.iso8601
+
+      existing_day = @existing&.days&.[](date_str)
+      meal_type = existing_day&.meal_type || config_type
+      dinner = existing_day&.dinner
+      lunch  = existing_day&.lunch
+      dinner_servings = dinner&.servings || default_servings
+      dinner_vibe = dinner&.vibe || 'feed_me'
+      dinner_note = dinner&.note || ''
+      lunch_enabled = lunch&.enabled == true
+      lunch_servings = lunch&.servings || default_servings
+      lunch_vibe = lunch&.vibe || 'feed_me'
+      lunch_note = lunch&.note || ''
+      lunch_section_id = "lunch-#{date_str}"
+    %>
+
+    <div class="day-card">
+      <div class="day-header">
+        <%= day_name %>
+        <span class="day-date"><%= date.strftime('%b %-d') %></span>
+      </div>
+
+      <div class="row">
+        <span class="label">Type</span>
+        <div class="radio-group">
+          <% %w[cook leftover skip].each do |t| %>
+            <label>
+              <input type="radio" name="days[<%= date_str %>][meal_type]" value="<%= t %>"
+                     <%= meal_type == t ? 'checked' : '' %>>
+              <span><%= t.capitalize %></span>
+            </label>
+          <% end %>
+        </div>
+      </div>
+
+      <div class="section-title" style="margin:6px 0 4px;">Dinner</div>
+      <div class="row">
+        <span class="label">Servings</span>
+        <input type="number" name="days[<%= date_str %>][dinner][servings]"
+               value="<%= dinner_servings %>" min="1" max="8">
+        <div class="radio-group">
+          <label>
+            <input type="radio" name="days[<%= date_str %>][dinner][vibe]" value="feed_me"
+                   <%= dinner_vibe != 'treat' ? 'checked' : '' %>>
+            <span>Feed Me</span>
+          </label>
+          <label>
+            <input type="radio" name="days[<%= date_str %>][dinner][vibe]" value="treat"
+                   <%= dinner_vibe == 'treat' ? 'checked' : '' %>>
+            <span>Treat</span>
+          </label>
+        </div>
+      </div>
+      <div class="row">
+        <span class="label">Note</span>
+        <input type="text" name="days[<%= date_str %>][dinner][note]"
+               value="<%= dinner_note %>" placeholder="e.g. nothing too heavy">
+      </div>
+
+      <div class="lunch-toggle" style="margin-top:8px;">
+        <input type="checkbox" id="lunch-cb-<%= date_str %>"
+               <%= lunch_enabled ? 'checked' : '' %>
+               onchange="toggleLunch(this, '<%= lunch_section_id %>')">
+        <label for="lunch-cb-<%= date_str %>">Include lunch</label>
+        <input type="hidden" name="days[<%= date_str %>][lunch][enabled]" value="0">
+        <input type="checkbox" name="days[<%= date_str %>][lunch][enabled]" value="1"
+               style="display:none" id="lunch-hidden-<%= date_str %>"
+               <%= lunch_enabled ? 'checked' : '' %>>
+      </div>
+      <script>
+        document.getElementById('lunch-cb-<%= date_str %>').addEventListener('change', function() {
+          document.getElementById('lunch-hidden-<%= date_str %>').checked = this.checked;
+        });
+      </script>
+
+      <div class="lunch-section <%= lunch_enabled ? 'visible' : '' %>" id="<%= lunch_section_id %>">
+        <div class="section-title">Lunch</div>
+        <div class="row">
+          <span class="label">Servings</span>
+          <input type="number" name="days[<%= date_str %>][lunch][servings]"
+                 value="<%= lunch_servings %>" min="1" max="8">
+          <div class="radio-group">
+            <label>
+              <input type="radio" name="days[<%= date_str %>][lunch][vibe]" value="feed_me"
+                     <%= lunch_vibe != 'treat' ? 'checked' : '' %>>
+              <span>Feed Me</span>
+            </label>
+            <label>
+              <input type="radio" name="days[<%= date_str %>][lunch][vibe]" value="treat"
+                     <%= lunch_vibe == 'treat' ? 'checked' : '' %>>
+              <span>Treat</span>
+            </label>
+          </div>
+        </div>
+        <div class="row">
+          <span class="label">Note</span>
+          <input type="text" name="days[<%= date_str %>][lunch][note]"
+                 value="<%= lunch_note %>" placeholder="e.g. salad, not a full meal">
+        </div>
+      </div>
+    </div>
+  <% end %>
+
+  <button type="submit" class="submit-btn">Save Preferences</button>
+  <p class="skip-notice">Submitting saves these preferences for the week. Close and regenerate in Telegram to apply them.</p>
+
+</form>
+</body>
+</html>

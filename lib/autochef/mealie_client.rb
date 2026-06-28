@@ -82,14 +82,27 @@ module Autochef
     # Fetches the current recipe first to avoid clobbering existing tags.
     def add_recipe_tags(slug, tag_names)
       r = recipe(slug)
-      existing = (r['tags'] || []).map { |t| t['name'] }
-      merged   = (existing + tag_names).uniq
-      patch("/api/recipes/#{slug}", { 'tags' => merged.map { |n| { 'name' => n } } })
+      existing      = r['tags'] || []
+      existing_names = existing.map { |t| t['name'] }
+      new_tags      = tag_names.reject { |n| existing_names.include?(n) }
+                               .map    { |n| ensure_tag(n) }
+      patch("/api/recipes/#{slug}", { 'tags' => existing + new_tags })
     end
 
     # Replace ALL tags on a recipe (use when you want a clean set).
     def set_recipe_tags(slug, tag_names)
-      patch("/api/recipes/#{slug}", { 'tags' => tag_names.map { |n| { 'name' => n } } })
+      tags = tag_names.map { |n| ensure_tag(n) }
+      patch("/api/recipes/#{slug}", { 'tags' => tags })
+    end
+
+    # Create a tag by name if it doesn't exist; return the full tag object
+    # (with slug + id) either way. Mealie v3 requires slug on recipe PATCH.
+    def ensure_tag(name)
+      result = post('/api/organizers/tags', { 'name' => name })
+      return result if result['slug']
+      # Already exists — find it
+      paginate('/api/organizers/tags').find { |t| t['name'].casecmp?(name) } ||
+        raise("Could not create or find tag: #{name}")
     end
 
     # GET /api/foods — returns all foods (paginates automatically).

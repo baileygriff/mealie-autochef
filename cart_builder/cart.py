@@ -328,8 +328,15 @@ def run_login() -> int:
     log("Log in to your Food Lion account, then close the browser or press Enter here.")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
+        browser = p.chromium.launch(
+            headless=False,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        context = browser.new_context(viewport={"width": 1280, "height": 800})
+        context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
         page = context.new_page()
         page.goto(FOODLION_TOGO_URL)
 
@@ -352,10 +359,8 @@ def setup_context(playwright, headless: bool = True) -> tuple[Browser, BrowserCo
     """Launch browser and create context, loading saved auth state if available."""
     browser = playwright.chromium.launch(
         headless=headless,
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-        ],
+        channel="chrome",
+        args=["--disable-blink-features=AutomationControlled"],
     )
 
     state_path = str(AUTH_STATE_PATH) if AUTH_STATE_PATH.exists() else None
@@ -367,11 +372,9 @@ def setup_context(playwright, headless: bool = True) -> tuple[Browser, BrowserCo
     context = browser.new_context(
         storage_state=state_path,
         viewport={"width": 1280, "height": 800},
-        user_agent=(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
+    )
+    context.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     )
     return browser, context
 

@@ -36,6 +36,10 @@ require_relative 'lib/autochef/cart_client'
 require_relative 'lib/autochef/notify'
 require_relative 'lib/autochef/reminders'
 require_relative 'lib/autochef/feedback'
+require_relative 'lib/autochef/week_prefs_source'
+require_relative 'lib/autochef/sinatra_prefs_source'
+require_relative 'lib/autochef/models/week_pref'
+require_relative 'lib/autochef/web/app'
 
 def ping_uptime_kuma(push_url)
   return false if push_url.to_s.empty?
@@ -56,6 +60,16 @@ end
 
 def build_client(cfg)
   Autochef::MealieClient.new(base_url: cfg.mealie.url, api_token: cfg.mealie.api_token)
+end
+
+# Mirror Planner#next_week_start for use outside Planner instances.
+def week_start_for(cfg)
+  order    = %w[Sun Mon Tue Wed Thu Fri Sat]
+  wday_idx = order.index(cfg.schedule.pickup_day) || 0
+  today    = Date.today
+  offset   = (wday_idx - today.wday) % 7
+  offset   = 7 if offset.zero?
+  today + offset
 end
 
 def cmd_check
@@ -250,10 +264,46 @@ def cmd_plan(freeform_note: nil)
                  .limit(4)
                  .map(&:plan)
 
+  # Apply week prefs from the Sinatra form (if any were submitted for this week).
+  prefs_source     = Autochef::SinatraPrefsSource.new
+  next_ws          = week_start_for(cfg)
+  week_prefs       = prefs_source.fetch(next_ws)
+  layout_overrides   = {}
+  servings_overrides = {}
+  combined_note    = freeform_note
+
+  if week_prefs
+    # Hard-filter pool by protein exclusions.
+    week_prefs.protein_excludes.each do |excluded|
+      pool.reject! { |r| (r['tags'] || []).any? { |t| t['name'] == "protein:#{excluded}" } }
+    end
+
+    # Build per-day layout and servings override hashes keyed by Date.
+    week_prefs.days.each do |date_str, dp|
+      date = Date.parse(date_str.to_s)
+      layout_overrides[date]   = dp if dp.meal_type
+      servings_overrides[date] = dp.dinner&.servings if dp.dinner&.servings
+    end
+
+    # Build combined freeform note: global + per-day treat/note labels.
+    vibe_notes = week_prefs.days.filter_map do |date_str, dp|
+      next unless dp.dinner
+      label = dp.dinner.vibe == 'treat' ? 'Treat meal' : nil
+      note  = dp.dinner.note.to_s.strip
+      next unless label || !note.empty?
+
+      "#{Date.parse(date_str.to_s).strftime('%a')} #{[label, note].compact.join(': ')}"
+    end
+    parts = [week_prefs.freeform_note, *vibe_notes].reject(&:empty?)
+    combined_note = parts.any? ? parts.join('. ') : freeform_note
+  end
+
   # Plan.
   llm     = Autochef::LlmPlanner.new(cfg)
   result  = llm.plan(pool: pool, scored_ids: scored_ids,
-                     freeform_note: freeform_note, recent_plans: recent_plans)
+                     freeform_note: combined_note, recent_plans: recent_plans,
+                     layout_overrides: layout_overrides,
+                     servings_overrides: servings_overrides)
   plan    = result.week_plan
 
   # Print.
@@ -300,11 +350,10 @@ def cmd_plan(freeform_note: nil)
   history.save!
   puts "\nPlan saved to plan_history (id=#{history.id})."
 
-  # Increment times_planned for each chosen recipe.
+  # Increment times_planned; last_planned is set on approval, not on draft save.
   plan.assignments.each do |a|
     stat = Autochef::Models::RecipeStat.find_or_initialize_by(recipe_id: a.recipe_id)
-    stat.times_planned  = stat.times_planned.to_i + 1
-    stat.last_planned   = plan.week_start
+    stat.times_planned = stat.times_planned.to_i + 1
     stat.save!
   end
 
@@ -312,7 +361,7 @@ def cmd_plan(freeform_note: nil)
   if cfg.notify.channel == 'telegram' && !cfg.notify.telegram_bot_token.to_s.empty?
     begin
       notifier = Autochef::Notifier.new(cfg, mealie_client: client)
-      notifier.send_draft(plan_history_id: history.id)
+      notifier.send_draft(plan_history_id: history.id, note: result.llm_error)
       puts "Plan draft sent to Telegram (plan_history id=#{history.id})."
       puts 'Start `bundle exec ruby main.rb serve` to handle approval buttons.'
     rescue StandardError => e
@@ -395,6 +444,16 @@ def cmd_serve
                                     mealie_client: client,
                                     scorer: scorer,
                                     llm_planner: llm)
+
+  # Start Sinatra week configurator in a background thread (non-blocking).
+  if cfg.web.enabled
+    prefs_source = Autochef::SinatraPrefsSource.new
+    Autochef::Web::App.configure_autochef(cfg: cfg, prefs_source: prefs_source)
+    Thread.new do
+      Autochef::Web::App.run!(port: cfg.web.port, bind: '0.0.0.0', quiet: true)
+    end
+    puts "Week configurator running at http://#{cfg.web.host}:#{cfg.web.port}/week"
+  end
 
   # Start reminder scheduler in background threads before the blocking bot loop.
   scheduler = Rufus::Scheduler.new

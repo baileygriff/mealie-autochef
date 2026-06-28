@@ -5,14 +5,14 @@ mealie:
   next_order_list: "Next Order"    # canonical Mealie shopping list = the cart
 
 store:
-  name: "FILL IN — preferred Food Lion store/location"
+  name: "3415 Avent Ferry Rd, Raleigh, NC 27609"
   fulfillment: "pickup"
 
 schedule:
-  weekly_run: "Thu 18:00"          # when to generate + send draft for approval
-  pickup_window_pref: "FILL IN — e.g. Sun 10:00-12:00"
+  weekly_run: "Mon 18:00"          # when to generate + send draft for approval
+  pickup_window_pref: "Thu 17:00-18:00"
   # the shop/pickup day anchors perishability scheduling
-  pickup_day: "Sun"
+  pickup_day: "Thu"
   # Phase 6 reminders (fired by `main.rb serve` via rufus-scheduler)
   thaw_reminder_time: "18:00"      # evening before a cook day — protein thaw nudge
   morning_ping_time: "08:00"       # cook-day morning ping ("Tonight: [recipe]")
@@ -21,15 +21,15 @@ schedule:
 meals:
   meal_types: ["dinner"]           # expandable to ["dinner", "lunch"]
   default_servings: 2
-  # per-day plan: cook | leftover | out | skip   (FILL IN: real layout)
+  # per-day plan: cook | leftover | out | skip
   week_layout:
     Sun: cook
-    Mon: leftover
-    Tue: cook
+    Mon: cook
+    Tue: leftover
     Wed: cook
     Thu: leftover
-    Fri: out
-    Sat: cook
+    Fri: cook
+    Sat: leftover
 
 selection:
   repeat_avoidance_weeks: 3        # don't replan a dinner within N weeks
@@ -59,6 +59,11 @@ notify:
 
 safety:
   dry_run: true                    # true => build cart, never auto-checkout
-  spending_cap_usd: 150            # hard cap; abort/flag above this — FILL IN to confirm
+  spending_cap_usd: 300            # hard cap; abort/flag above this
   cart_deviation_alert_pct: 20     # re-confirm if total deviates from estimate
   kill_switch_file: "data/PAUSE"   # if present, no ordering actions run
+
+web:
+  enabled: true
+  port: 3456
+  host: "192.168.1.64"             # Unraid box IP — used in Telegram "Configure week" link

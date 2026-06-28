@@ -36,6 +36,7 @@ require 'autochef/models/order_history'
 require 'autochef/models/recurring_item'
 require 'autochef/models/product_map'
 require 'autochef/models/manual_addition'
+require 'autochef/models/week_pref'
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|
