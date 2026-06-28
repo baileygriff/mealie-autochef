@@ -343,7 +343,8 @@ mealie-autochef/
 │   ├── planner_spec.rb
 │   ├── feedback_spec.rb
 │   ├── safety_spec.rb
-│   └── week_prefs_spec.rb
+│   ├── week_prefs_spec.rb
+│   └── manual_addition_spec.rb   # ManualAddition model + resolve logic invariants
 │
 ├── MEMORY.md                     # locked decisions, gotchas, verified state
 ├── TESTING_HANDOFF.md            # agent briefing for test/feedback sessions
@@ -385,7 +386,7 @@ at every meaningful step.
 bundle exec rspec
 ```
 
-44 examples, 0 failures. Tests use in-memory SQLite (`:memory:`) and
+50 examples, 0 failures. Tests use in-memory SQLite (`:memory:`) and
 transaction rollback isolation — they never touch `data/autochef.db`.
 
 ---

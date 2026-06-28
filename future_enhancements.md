@@ -16,6 +16,44 @@ Items 1–4 completed in the ninth session (2026-06-28). See [testing_feedback.m
 - ✅ `/add` multi-item LLM flow — `LlmItemParser`, preview/confirm/edit/cancel, cart rebuild (twelfth session)
 - ✅ Automap Telegram report reformatted — two sections: Grocery additions (bullet, qty/unit) + Pantry skips (compact comma list) (twelfth session)
 - 🔧 Previous Purchases cart optimization — `add_from_previous_purchases` in `cart_builder/cart.py`; tries Food Lion's "My Items / Previous Purchases" section before search, adds matched items by brand/variant, falls back gracefully to search for unmatched. `previous_purchases_stats` in output. **Needs live build-cart test (thirteenth session)**
+- 🗂️ Modular Testability Refactor — see spec below
+
+---
+
+## Feedback / Improvements (pending)
+
+### Modular Testability Refactor
+
+**Goal:** Make as much of the codebase unit-testable without a live browser, Mealie instance, or Telegram credentials. Motivated by the testing practice standard added 2026-06-28 — Chrome runs are slow, Mealie calls require live connectivity, and most Ruby logic can be validated faster with in-memory specs.
+
+**Current pain points:**
+
+| Problem | Impact |
+|---|---|
+| `resolve_cart_item` is a standalone function in `main.rb` | Can't import it in specs without loading all of main.rb (config, Dotenv, etc.) |
+| Cart resolution logic (resolve → consolidate → send to cart.py) is inline in `cmd_build_cart` | Can't spec the resolution pass without mocking everything |
+| `cmd_build_cart` tightly couples config, DB, Mealie API, and cart logic | Hard to write a focused integration test |
+| `cart.py` has no non-browser testable path | No way to verify matching logic without launching Chrome |
+
+**Proposed changes (implement in order, smallest first):**
+
+1. **Extract `resolve_cart_item` to `lib/autochef/cart_resolver.rb`** — thin module/class wrapping the ProductMap lookup. Keeps the existing `main.rb` call-site as a one-liner delegation. Unlocks direct unit testing of the resolution logic (the biggest gap right now).
+
+2. **Extract cart-item consolidation (Enhancement 1 + 2) to `lib/autochef/cart_consolidator.rb`** — currently inline in `cmd_build_cart`. Makes the consolidation logic directly specable without any Mealie or DB dependency beyond ProductMap.
+
+3. **Add a `--fixture` mode to `cart.py`** — accept `--fixture path/to/items.json` instead of stdin, skip browser entirely, print a mock output JSON with the same structure. Lets agents verify the Python JSON contract and output shape without launching Chrome.
+
+**What stays as-is:**
+- Live `build-cart --force` runs for end-to-end browser validation (just less frequent — only when the above unit tests pass first)
+- Mealie API paths tested via `main.rb check` (fast enough, no browser)
+
+**Key files to touch:**
+- `lib/autochef/cart_resolver.rb` (new)
+- `lib/autochef/cart_consolidator.rb` (new)
+- `main.rb` — delegate to the new classes (no behavior change)
+- `cart_builder/cart.py` — add `--fixture` arg to `argparse`
+- `spec/cart_resolver_spec.rb` (new)
+- `spec/cart_consolidator_spec.rb` (new)
 
 ---
 

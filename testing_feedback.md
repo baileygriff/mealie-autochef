@@ -12,7 +12,7 @@ For per-feature verification status (what's been tested end-to-end vs. still unt
 
 ---
 
-## Test Suite State (2026-06-28, 44 examples, 0 failures)
+## Test Suite State (2026-06-28, 50 examples, 0 failures)
 
 | Spec file | Examples |
 |---|---|
@@ -22,6 +22,7 @@ For per-feature verification status (what's been tested end-to-end vs. still unt
 | spec/feedback_spec.rb | 6 |
 | spec/safety_spec.rb | 14 |
 | spec/week_prefs_spec.rb | 10 |
+| spec/manual_addition_spec.rb | 6 |
 
 ---
 
@@ -77,6 +78,26 @@ Run `bundle exec ruby scripts/seed_product_map.rb --list` to inspect all entries
 | easy-pan-roasted-pork-tenderloin-with-bourbon-soaked-figs-recipe | american | pork | quick | no |
 | lemon-pasta-with-salmon | mediterranean | seafood | quick | no |
 | fish-tacos-recipe | mexican | seafood | quick | no |
+
+---
+
+## Implemented / Fixed — 2026-06-28 (fourteenth session)
+
+**Bug: `PREV_PURCHASES_URL` pointed at the wrong page**
+`PREV_PURCHASES_URL` was set to `https://www.foodlion.com/shop/my_items`. Live test confirmed 0 cards found on that page. Account screenshot confirmed the actual URL is `https://www.foodlion.com/past-purchases` with no tab structure — it's a direct page in the top nav. Fixed: `PREV_PURCHASES_URL` updated, `SEL_MY_ITEMS_LINK` updated to target "Past Purchases" nav link, `SEL_PREV_PURCHASES_TAB` set to empty list (no tab to click), URL check updated to accept `"past-purchases"`. Card selectors (`SEL_PREV_PRODUCT_CARD`, `SEL_PREV_PRODUCT_NAME`) unchanged — still need a live run to verify they match the actual DOM.
+File: `cart_builder/cart.py`
+
+**New: Testing practice standard**
+Added "Testing practice" section to TESTING_HANDOFF.md covering: minimum representative testing, decision table (fastest feedback loop per scenario), requirement to pre-define success/failure before any test run, prefer specs over live runs, ask-if-stuck rule. Motivated by the cost of slow Chrome/Playwright runs during testing.
+File: `TESTING_HANDOFF.md`
+
+**New: `spec/manual_addition_spec.rb`**
+6 examples covering: ManualAddition `.pending` scope, resolve logic for items with and without ProductMap entries, `__skip__` exclusion, DB persistence invariant (cart.py's `clear_cart()` never touches the Ruby DB). Test suite: 44 → 50 examples, 0 failures.
+File: `spec/manual_addition_spec.rb`
+
+**New: Modular Testability Refactor plan**
+Documented in `future_enhancements.md`. Proposes extracting `resolve_cart_item` → `CartResolver`, consolidation logic → `CartConsolidator`, and adding `--fixture` mode to `cart.py`. Makes most cart logic specable without a live browser.
+File: `future_enhancements.md`
 
 ---
 

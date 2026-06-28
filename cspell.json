@@ -41,7 +41,9 @@
     "weekpref",
     "Weekpref",
     "llm",
-    "LLM"
+    "LLM",
+    "Instacart",
+    "codegen"
   ],
   "ignorePaths": [
     "data/**",

@@ -74,7 +74,7 @@ mealie-autochef-ruby/
 │   ├── seed_product_map.rb        # Map ingredients → Food Lion search terms
 │   └── import_recipes.rb          # Bulk recipe importer (POST+PATCH Mealie API)
 │
-├── spec/                          # RSpec — 44 examples, all pass, in-memory SQLite
+├── spec/                          # RSpec — 50 examples, all pass, in-memory SQLite
 ├── data/                          # SQLite DB, playwright_state.json, backups
 ├── docker/                        # Dockerfile + docker-compose.yml
 │
@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (thirteenth session)
+## Current state as of 2026-06-28 (fourteenth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -122,7 +122,11 @@ mealie-autochef-ruby/
 | Feature 6 — LLM Assisted Recipe Mapping | ✓ | Verified end-to-end: 35/35 plan id=5 items mapped correctly; bug fixed (key suffix + key mismatch) |
 | `/add` multi-item LLM flow | ✓ | `LlmItemParser`, preview + confirm/edit/cancel buttons, triggers cart rebuild on confirm |
 | Automap Telegram report reformatted | ✓ | Sectioned: Grocery additions (bullet, qty/unit) + Pantry skips (compact comma list) |
-| Previous Purchases cart optimization | 🔧 | Implemented; needs live `build-cart` test — see thirteenth session notes |
+| Testing practice standard | ✓ | Documented in "Testing practice" section; decision table, pre-define success/failure, prefer specs |
+| `spec/manual_addition_spec.rb` | ✓ | 6 examples; tests ManualAddition model, resolve logic, pending scope (50 total, 0 failures) |
+| Previous Purchases URL fix | ✓ | `PREV_PURCHASES_URL` corrected to `/past-purchases`; `SEL_MY_ITEMS_LINK` updated; tab click removed |
+| Previous Purchases card selectors | 🔧 | URL now correct; `SEL_PREV_PRODUCT_CARD`/`SEL_PREV_PRODUCT_NAME` still unverified — run `build-cart --force` to confirm 0→N |
+| Modular Testability Refactor | 🗂️ | Planned in future_enhancements.md; not yet implemented |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
@@ -219,7 +223,7 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **`last_planned` is set on approval, not on draft save** — this was a bug fixed 2026-06-28. Don't move it back. Drafts only update `times_planned`.
 
-**Previous Purchases selectors are best-guess** — `SEL_PREV_PRODUCT_CARD`, `SEL_PREV_PRODUCT_NAME`, `SEL_MY_ITEMS_LINK`, and `SEL_PREV_PURCHASES_TAB` in `cart_builder/cart.py` were written from knowledge of Instacart's white-label DOM patterns but have not been tested against live Food Lion. If the Previous Purchases pass reports 0 items found, open `playwright codegen https://www.foodlion.com/shop/my_items`, navigate to Previous Purchases, inspect the card container and name elements, and update the constants. The feature falls back to full search if it can't navigate to the page or finds 0 cards — existing behavior is never regressed.
+**Past Purchases URL is confirmed** — Food Lion's past purchases page is at `https://www.foodlion.com/past-purchases` (confirmed 2026-06-28; `PREV_PURCHASES_URL` updated). There is no "My Items" tab — it's a direct page in the top nav under "Past Purchases". `SEL_PREV_PURCHASES_TAB` is now an empty list (no tab click needed). `SEL_PREV_PRODUCT_CARD` and `SEL_PREV_PRODUCT_NAME` are still best-guess Instacart DOM patterns — if the Previous Purchases pass reports 0 items found despite real past purchases being present, run `playwright codegen https://www.foodlion.com/past-purchases`, inspect the card container and name elements, and update those two constants. The feature falls back to full search if it finds 0 cards — existing behavior is never regressed.
 
 **`LlmRecipeMapper` uses numbered items + index echo** — items sent as `1. {note}`, `2. {note}`, ...  and the LLM must return `"index": N` in each response. The save loop uses `unmapped[index - 1]['note']` as the product_map key, NOT `s['ingredient_name']`. This ensures keys match what `resolve_cart_item` looks up (the full Mealie note). Do not revert to using `s['ingredient_name']` as the key — it strips quantity prefixes and breaks the lookup.
 
@@ -241,6 +245,38 @@ bundle exec ruby scripts/seed_product_map.rb
 
 ---
 
+## Testing practice
+
+**Minimum representative testing.** Chrome/Playwright runs are slow (2–5 min each), Mealie API calls require live connectivity, and the overall pipeline is long. Run the full pipeline only when you actually need to validate end-to-end behavior. For everything else, find the shortest feedback loop that genuinely tests the thing you care about.
+
+**Decision guide — choose the fastest loop that covers the risk:**
+
+| What you're verifying | Preferred approach |
+|---|---|
+| Ruby model behavior, DB queries, scopes | `bundle exec rspec` (in-memory SQLite, < 1s) |
+| A new Ruby helper / utility function | Write a unit spec; don't run main.rb |
+| Config loading / validation | `bundle exec rspec spec/config_spec.rb` |
+| Mealie API path / JSON parsing | `main.rb check` (< 5s) — or mock in spec if possible |
+| Shopping list generation | `main.rb shop` (fast, no browser) |
+| Plan generation (no Telegram) | `main.rb plan` then skip the approval wait |
+| Cart-building logic (no browser) | Spec the Ruby side (consolidation, resolve_cart_item, etc.) |
+| End-to-end cart build with browser | `main.rb build-cart --force` — only when Ruby side is already verified |
+
+**Pre-define success and failure before running.** Before any test (especially a browser run), write down:
+- What output / log line / DB state counts as success
+- What counts as failure
+- What you'll do if the result is ambiguous
+
+If you're not sure what success looks like, **ask Bailey** — no assumptions.
+
+**Prefer specs over live runs for new Ruby code.** Any new function that can be tested without a browser, a live Mealie instance, or real Telegram credentials should have an RSpec example before it's considered done. Use the in-memory DB + existing spec_helper fixtures. See `spec/manual_addition_spec.rb` for an example of testing model + resolve logic without loading all of main.rb.
+
+**If you're stuck, facing a long-running task, or unsure how to proceed — stop and ask.** Don't grind through a 5-minute browser run hoping it'll reveal the problem. Don't make assumptions about what Bailey would want. A short question saves everyone time.
+
+**See [future_enhancements.md § Modular Testability Refactor](future_enhancements.md) for planned code changes that will make more of this codebase unit-testable without live dependencies.**
+
+---
+
 ## What's coming next
 
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
@@ -253,8 +289,14 @@ bundle exec ruby scripts/seed_product_map.rb
 9. Recipe Sleep feature
 10. LLM Recipe Suggestions (`/newrecipes`)
 
-### Added this session (thirteenth)
-- 🔧 Previous Purchases cart optimization — `add_from_previous_purchases` in `cart_builder/cart.py`; navigates to Food Lion's "My Items / Previous Purchases" section before the search loop, fuzzy-matches shopping items to prior-purchase products (word-overlap score ≥0.6), adds matches directly (right brand/variant), falls back to search for the rest. `previous_purchases_stats` added to output JSON; logged in `main.rb` stdout and Telegram cart-ready message. **Needs live `build-cart` test to verify selector accuracy.**
+### Added this session (fourteenth)
+- ✓ **Previous Purchases URL confirmed and fixed** — `PREV_PURCHASES_URL` corrected from `/shop/my_items` to `/past-purchases` (confirmed from live account screenshot). `SEL_MY_ITEMS_LINK` updated for "Past Purchases" nav link. `SEL_PREV_PURCHASES_TAB` emptied (no tab — direct page). URL check updated to accept `past-purchases`. **Card selectors still unverified** — run `build-cart --force` and check for PP pass item count > 0. If still 0, run `playwright codegen https://www.foodlion.com/past-purchases` and update `SEL_PREV_PRODUCT_CARD` / `SEL_PREV_PRODUCT_NAME`.
+- ✓ **Testing practice standard** — new section in TESTING_HANDOFF; decision table (fastest loop per scenario), pre-define success/failure rule, prefer specs over live runs, ask-if-stuck rule.
+- ✓ **`spec/manual_addition_spec.rb`** — 6 examples: ManualAddition pending scope, resolve logic (ProductMap lookup + fallback), persistence invariant. 50 total, 0 failures.
+- 🗂️ **Modular Testability Refactor planned** — `CartResolver`, `CartConsolidator` extraction + cart.py `--fixture` mode. Spec in `future_enhancements.md`.
+
+### Added in thirteenth session
+- ✓ Previous Purchases cart optimization implemented (`add_from_previous_purchases`, word-overlap matching, graceful fallback, `previous_purchases_stats` in output)
 
 ### Completed in earlier sessions
 - ✅ `/add` multi-item LLM flow — `LlmItemParser`, preview/confirm/edit/cancel, cart rebuild on confirm (`lib/autochef/llm_item_parser.rb`, `lib/autochef/notify.rb`) (twelfth session)

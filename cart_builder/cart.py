@@ -104,9 +104,9 @@ from playwright.sync_api import (
 # If Food Lion redirects to a different path, update this and AUTH_EXPECTED_DOMAIN.
 FOODLION_TOGO_URL = "https://www.foodlion.com/shop"
 
-# Direct URL to the My Items / Previous Purchases section.
-# Food Lion's Instacart white-label uses this path pattern.
-PREV_PURCHASES_URL = "https://www.foodlion.com/shop/my_items"
+# Direct URL to Food Lion's Past Purchases page.
+# Confirmed URL from live Food Lion account (2026-06-28).
+PREV_PURCHASES_URL = "https://www.foodlion.com/past-purchases"
 
 # Minimum word-overlap fraction to consider a previous purchase a match.
 # 0.6 means 60% of significant words in the search term must appear in the
@@ -245,23 +245,19 @@ SEL_CART_ITEM_REMOVE_CONFIRM = [
     'button:has-text("Confirm")',
 ]
 
-# Navigation link to the My Items / Previous Purchases section
+# Navigation link to Food Lion's Past Purchases page (top nav bar).
+# Confirmed present in Food Lion nav as "Past Purchases" (2026-06-28).
 SEL_MY_ITEMS_LINK = [
-    '[data-testid*="my-items"]',
-    'a[href*="my_items"]',
-    'a:has-text("My Items")',
-    'nav a:has-text("My Items")',
-    '[aria-label*="My Items" i]',
+    '[data-testid*="past-purchases"]',
+    'a[href*="past-purchases"]',
+    'a:has-text("Past Purchases")',
+    'nav a:has-text("Past")',
+    '[aria-label*="Past Purchases" i]',
 ]
 
-# "Previous Purchases" tab within the My Items section
-SEL_PREV_PURCHASES_TAB = [
-    '[data-testid="previous-purchases-tab"]',
-    '[data-testid*="previous-purchases"]',
-    'button:has-text("Previous Purchases")',
-    '[role="tab"]:has-text("Previous")',
-    'a:has-text("Previous Purchases")',
-]
+# Food Lion uses a direct /past-purchases page, not a tabbed "My Items" layout.
+# No tab click is needed — kept as empty list so try_click is a harmless no-op.
+SEL_PREV_PURCHASES_TAB: list[str] = []
 
 # Product card containers on the Previous Purchases page
 SEL_PREV_PRODUCT_CARD = [
@@ -840,11 +836,11 @@ def _navigate_to_previous_purchases(page: Page) -> bool:
         try_click(page, SEL_PREV_PURCHASES_TAB, timeout=4000)
         pace(1000)
         current = page.url
-        if "my_items" in current or "previous" in current.lower():
-            log(f"  Navigated to Previous Purchases: {current}")
+        if any(kw in current.lower() for kw in ("past-purchases", "past_purchases", "my_items", "previous")):
+            log(f"  Navigated to Past Purchases: {current}")
             return True
     except Exception as e:
-        log(f"  Direct URL to Previous Purchases failed: {e}")
+        log(f"  Direct URL to Past Purchases failed: {e}")
 
     # Fallback: click My Items link from store page
     try:
@@ -854,14 +850,12 @@ def _navigate_to_previous_purchases(page: Page) -> bool:
         clicked = try_click(page, SEL_MY_ITEMS_LINK, timeout=8000)
         if clicked:
             pace(1500)
-            try_click(page, SEL_PREV_PURCHASES_TAB, timeout=4000)
-            pace(1000)
-            log(f"  Navigated to My Items via nav link: {page.url}")
+            log(f"  Navigated to Past Purchases via nav link: {page.url}")
             return True
     except Exception as e:
-        log(f"  Nav-link approach to Previous Purchases failed: {e}")
+        log(f"  Nav-link approach to Past Purchases failed: {e}")
 
-    log("  Previous Purchases page not accessible — all items will use search")
+    log("  Past Purchases page not accessible — all items will use search")
     return False
 
 
