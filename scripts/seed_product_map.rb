@@ -9,7 +9,8 @@
 #   bundle exec ruby scripts/seed_product_map.rb --list       # list existing mappings
 #   bundle exec ruby scripts/seed_product_map.rb --update     # re-map already-mapped items
 #
-# For each unmapped ingredient from the most recent approved plan, prompts for:
+# For each autochef-managed item in the Mealie "Next Order" shopping list,
+# prompts for:
 #   - Search term (what to search on Food Lion To Go — defaults to the food name)
 #   - Pack size (numeric, e.g. 16)
 #   - Pack unit (oz, lb, ct, etc.)
@@ -21,6 +22,7 @@ $LOAD_PATH.unshift(File.expand_path('..', __dir__))
 
 require_relative '../lib/autochef/config'
 require_relative '../lib/autochef/database'
+require_relative '../lib/autochef/mealie_client'
 require_relative '../lib/autochef/models/plan_history'
 require_relative '../lib/autochef/models/product_map'
 
@@ -66,46 +68,35 @@ if mode == '--list'
   exit 0
 end
 
-# Collect ingredients from the most recent approved plan.
+# Verify there's an approved plan.
 recent = Autochef::Models::PlanHistory.where(approved: 1).order(created_at: :desc).first
-
 if recent.nil?
   puts 'No approved plans in the database. Approve a plan first.'
-  puts 'You can also map items manually with a key and --update flag.'
+  exit 1
+end
+puts "Using approved plan id=#{recent.id} (week of #{recent.week_start}).\n\n"
+
+# Fetch item names from the Mealie "Next Order" shopping list.
+mealie = Autochef::MealieClient.new(base_url: cfg.mealie.url, api_token: cfg.mealie.api_token)
+list_name = cfg.mealie.next_order_list
+list = mealie.find_or_create_shopping_list(list_name)
+list_id = list['id']
+list_detail = mealie.shopping_list(list_id)
+raw_items = list_detail['listItems'] || list_detail['items'] || []
+
+autochef_items = raw_items.select do |item|
+  (item['extras'] || {})['autochef_managed'].to_s == 'true'
+end
+
+if autochef_items.empty?
+  puts "No autochef-managed items found in \"#{list_name}\"."
+  puts "Run `main.rb shop` first to populate the list, then re-run this script."
   exit 1
 end
 
-puts "Using approved plan id=#{recent.id} (week of #{recent.week_start}).\n\n"
+puts "Found #{autochef_items.size} autochef-managed item(s) in \"#{list_name}\".\n\n"
 
-all_food_names = []
-recent.plan.each_value do |entry|
-  next unless entry['recipe_id']
-
-  # Pull food names from the plan JSON. Full ingredient details require Mealie
-  # access; here we just pick up any food_name keys stored by the shopping builder.
-  # Fall back gracefully if not present — the user can still seed arbitrary keys.
-  (entry['ingredients'] || []).each do |ing|
-    name = ing['food_name'].to_s.strip
-    all_food_names << name unless name.empty?
-  end
-end
-
-# Deduplicate and normalize keys.
-food_keys = all_food_names.map { |n| normalize(n) }.uniq.sort
-
-if food_keys.empty?
-  puts "No ingredient data embedded in this plan's JSON."
-  puts "Tip: run `main.rb shop` first — it will report unmapped items."
-  puts "Then re-run this script and enter keys manually, or provide a list below.\n\n"
-  puts 'Enter ingredient names to map (one per line, blank to finish):'
-  loop do
-    input = $stdin.gets&.chomp&.strip
-    break if input.nil? || input.empty?
-
-    food_keys << normalize(input)
-  end
-  food_keys.uniq!
-end
+food_keys = autochef_items.map { |item| normalize(item['note'].to_s) }.uniq.sort
 
 existing_keys = Autochef::Models::ProductMap.pluck(:key).to_set
 

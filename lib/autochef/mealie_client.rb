@@ -123,9 +123,9 @@ module Autochef
       patch("/api/foods/#{food_id}", { 'extras' => merged_extras })
     end
 
-    # GET /api/groups/shopping/lists — all shopping lists for the group.
+    # GET /api/households/shopping/lists — all shopping lists (Mealie v3+).
     def shopping_lists
-      paginate('/api/groups/shopping/lists')
+      paginate('/api/households/shopping/lists')
     end
 
     # Find a shopping list by name, or create it if it doesn't exist.
@@ -135,16 +135,16 @@ module Autochef
       existing = lists.find { |l| l['name'].to_s.casecmp?(name) }
       return existing if existing
 
-      post('/api/groups/shopping/lists', { 'name' => name })
+      post('/api/households/shopping/lists', { 'name' => name })
     end
 
-    # POST /api/groups/shopping/lists/{list_id}/items — add one item to a list.
+    # POST /api/households/shopping/items — add one item to a list (Mealie v3+).
     # quantity, unit, note are optional.
     def add_shopping_list_item(list_id, name:, quantity: 1, unit: nil, note: nil)
       body = { 'shoppingListId' => list_id, 'note' => name, 'quantity' => quantity.to_f }
       body['unit'] = { 'name' => unit } if unit
       body['extras'] = { 'source' => note } if note
-      post("/api/groups/shopping/lists/#{list_id}/items", body)
+      post('/api/households/shopping/items', body)
     end
 
     # Like add_shopping_list_item but marks the item with autochef_managed: true
@@ -161,7 +161,7 @@ module Autochef
       body['food']    = { 'id'   => food_id } if food_id
       body['label']   = { 'name' => label }   if label
       body['extras']['source_note'] = note     if note
-      post("/api/groups/shopping/lists/#{list_id}/items", body)
+      post('/api/households/shopping/items', body)
     end
 
     # Delete all items in a list that were created by autochef (extras.autochef_managed == 'true').
@@ -179,19 +179,19 @@ module Autochef
       autochef_items.size
     end
 
-    # DELETE /api/groups/shopping/lists/{list_id}/items/{item_id}
-    def remove_shopping_list_item(list_id, item_id)
+    # DELETE /api/households/shopping/items/{item_id} (Mealie v3+).
+    def remove_shopping_list_item(_list_id, item_id)
       resp = HTTParty.delete(
-        "#{@base_url}/api/groups/shopping/lists/#{list_id}/items/#{item_id}",
+        "#{@base_url}/api/households/shopping/items/#{item_id}",
         headers: auth_headers,
         timeout: 30
       )
       handle_response!(resp)
     end
 
-    # GET /api/groups/shopping/lists/{list_id} — full list with items.
+    # GET /api/households/shopping/lists/{list_id} — full list with items.
     def shopping_list(list_id)
-      get("/api/groups/shopping/lists/#{list_id}")
+      get("/api/households/shopping/lists/#{list_id}")
     end
 
     # POST /api/admin/backups — trigger Mealie's built-in backup.
