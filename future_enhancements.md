@@ -316,12 +316,24 @@ Reset button clears `sleep_until` and `sleep_count` for that recipe.
 
 ### 10. LLM Recipe Suggestions (`/newrecipes`)
 
-Bailey can trigger a new-recipe suggestion round from Telegram at any time. Claude Sonnet looks at what Bailey likes and finds 3 new recipes — using web search first, generating from training data as fallback.
+Bailey can trigger a new-recipe suggestion round from Telegram at any time, with optional
+freeform context to guide the suggestions.
+
+**Usage:**
+```
+/newrecipes
+/newrecipes give me something practical and quick, something asian
+/newrecipes I want a comfort food project for the weekend
+```
+
+Any text after `/newrecipes` is passed directly to the LLM as a freeform guidance note.
+When no note is given, suggestions are based purely on past preferences.
 
 **Context sent to LLM:**
 - Recipes with `times_planned >= 2` OR Mealie `rating >= 4` OR positive feedback → "liked" recipes with cuisine/protein/effort tags
 - Current recipe pool (to avoid re-suggesting something already in Mealie)
 - Last N suggestion feedback entries (so suggestions improve over time)
+- The inline guidance note, if provided (takes priority over inferred preferences)
 
 **LLM call:**
 - Model: Claude Sonnet (has `web_search` tool)

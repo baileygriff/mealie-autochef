@@ -7,11 +7,11 @@ AutoChef automates your weekly meal-planning, shopping-list generation, and Food
 ## How it works (the weekly loop)
 
 ```
-Thursday ~6 pm
+Monday ~6 pm
   AutoChef scores your recipe pool → Claude Haiku arranges the week
   → sends a Telegram message with the plan + inline buttons
 
-You (anytime before the weekend)
+You (anytime before Thursday pickup)
   Review the plan on your phone
   → tap Approve / Swap a meal / Regenerate / Add a note
 
@@ -24,7 +24,7 @@ AutoChef (on Approve)
   → adds every item, selects a pickup slot, STOPS before checkout
   → sends "Cart ready: $XX.XX — [tap to review]"
 
-You (Sunday morning)
+You (Thursday)
   Tap the link → review the cart → place the order
 
 After the week
@@ -125,7 +125,13 @@ Pulls `avg_rating` and `lastMade` from Mealie into the local `recipe_stats` tabl
 
 ### 7. Pantry staples
 
-In Mealie: mark any food you always keep on hand as **"On Hand"** (the toggle on the food detail page). Those foods are automatically excluded from the shopping list — salt, oil, common spices never appear in your cart.
+**For imported free-text recipes** (which is most of them): use the `s` shortcut in
+`seed_product_map.rb` to mark an ingredient as a pantry staple. It gets saved as `__skip__`
+and is never sent to Food Lion. The cart-ready Telegram message lists all pantry-skipped
+items so you can verify you have them before pickup.
+
+Mealie's "On Hand" food toggle only works when an ingredient is explicitly linked to a
+Mealie food object — imported recipes use free-text notes and bypass it.
 
 ### 8. Seed the product map
 
@@ -159,7 +165,7 @@ Opens a visible Chromium browser, waits for you to log in to Food Lion To Go, th
 
 ## Weekly operation
 
-### Thursday: plan generation
+### Monday: plan generation
 
 AutoChef generates a plan automatically (via `main.rb serve`'s rufus-scheduler, or via a cron/Unraid User Script calling `main.rb plan`). You receive a Telegram message like:
 

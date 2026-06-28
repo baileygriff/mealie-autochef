@@ -51,7 +51,7 @@ mealie-autochef-ruby/
 │   ├── config.rb                  # Config loader + validator (raises ConfigError loudly)
 │   ├── database.rb                # AR setup, migrations (AR 7.2 API — see gotchas)
 │   ├── mealie_client.rb           # All Mealie API calls (paginate, get, post, patch)
-│   ├── scorer.rb                  # Recipe scoring (rating, recency, tag affinity)
+│   ├── scoring.rb                 # Recipe scoring (rating, recency, tag affinity)
 │   ├── planner.rb                 # Deterministic week layout + perishability ordering
 │   ├── llm_planner.rb             # Claude Haiku arrangement layer (wraps planner.rb)
 │   ├── notify.rb                  # Telegram bot — polling, inline buttons, approval flow

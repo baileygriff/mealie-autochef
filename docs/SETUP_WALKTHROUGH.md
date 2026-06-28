@@ -176,7 +176,7 @@ source .venv/bin/activate
 
 # Install Playwright and dependencies
 pip install -r cart_builder/requirements.txt
-playwright install --with-deps chromium
+playwright install chrome
 ```
 
 **Verify:**
@@ -192,7 +192,7 @@ python3 -c "from playwright.sync_api import sync_playwright; print('OK')"
 python3 cart_builder/cart.py --login
 ```
 
-This opens a **visible** Chromium browser window and waits for you to:
+This opens a **visible** Chrome browser window and waits for you to:
 1. Navigate to Food Lion To Go
 2. Log in with your `FOODLION_USERNAME` / `FOODLION_PASSWORD`
 3. Make sure you're on the pickup flow (not delivery)

@@ -90,7 +90,7 @@ mealie-autochef/
 │       ├── order_history.rb
 │       └── week_pref.rb
 │
-├── db/migrate/                    # 9 migrations, run by Database.migrate! at startup
+├── db/migrate/                    # 9 migrations (001–009), run by Database.migrate! at startup
 │
 ├── cart_builder/
 │   ├── cart.py                    # Playwright Food Lion automation (Python only)
@@ -106,7 +106,8 @@ mealie-autochef/
 │   ├── scoring_spec.rb
 │   ├── planner_spec.rb
 │   ├── feedback_spec.rb
-│   └── safety_spec.rb
+│   ├── safety_spec.rb
+│   └── week_prefs_spec.rb
 │
 └── docker/
     ├── Dockerfile
@@ -117,7 +118,7 @@ mealie-autochef/
 
 ## Database schema
 
-All 8 migrations run at process startup via `Autochef::Database.migrate!`.
+All 9 migrations run at process startup via `Autochef::Database.migrate!`.
 
 ### `recipe_stats` (primary key: `recipe_id`)
 
@@ -621,7 +622,7 @@ bundle exec rspec
 # → 44 examples, 0 failures
 ```
 
-Tests use in-memory SQLite (`:memory:`) and wrap each example in a transaction that rolls back — no `data/autochef.db` is touched. `spec/spec_helper.rb` runs all 8 migrations against the in-memory DB at suite startup.
+Tests use in-memory SQLite (`:memory:`) and wrap each example in a transaction that rolls back — no `data/autochef.db` is touched. `spec/spec_helper.rb` runs all 9 migrations against the in-memory DB at suite startup.
 
 ### Inspecting the database
 
@@ -637,7 +638,7 @@ SELECT * FROM order_history ORDER BY created_at DESC LIMIT 5;
 ## Known-fragile areas
 
 - **Cart builder** (`cart_builder/cart.py`) automates a consumer website not built for automation. Expect selector rot when Food Lion ships UI changes. The `SELECTOR MAINTENANCE` section in `cart.py` documents the recovery procedure (Playwright Codegen). Keep `dry_run: true` and manual checkout as permanent defaults.
-- **`SEL_CART_ITEM_REMOVE` selectors** — the cart-clearing selectors in `cart.py` were added based on expected Instacart UI conventions but have not been confirmed against the live site. If `clear_cart()` logs `Cleared 0 item(s)` when items are present, run Playwright Codegen to find the correct remove-button selector and update `SEL_CART_ITEM_REMOVE`.
+- **`SEL_CART_ITEM_REMOVE` selectors** — confirmed working as of 2026-06-28 (cleared 27–60 items on live runs, including `SEL_CART_ITEM_REMOVE_CONFIRM` for the OK dialog). If selectors break after a Food Lion UI update, use Playwright Codegen to find the new remove-button selector.
 - **Product map key matching** — `main.rb`'s `resolve_cart_item` looks up `product_map` by `item['note']` (the Mealie shopping list item's display text). `seed_product_map.rb` keys entries by the same `note` text fetched from the live "Next Order" list, so they agree for standard use. The edge case: if a `ProductMap` record has a `display_name` override set, `push_ingredient` will write that override as the Mealie item `note`, which then won't match the product map's `food_name`-based key. Avoid setting `display_name` unless you also update the `key` to match.
 - **`est_total` never populated** — `cart.py`'s `run_build_cart` doesn't compute a pre-cart estimate, so `safety.deviation_warning` always receives `nil` and never fires.
 - **LLM output** — always JSON-validated with a deterministic fallback. A bad model response can never break a run; at worst it adds a `llm_error` note to the plan output.

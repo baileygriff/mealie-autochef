@@ -13,9 +13,8 @@ Target store: Food Lion, pickup only.
 - [User Guide](docs/USER_GUIDE.md) — weekly operation, Telegram commands, configuration reference, troubleshooting
 - [Developer Guide](docs/DEVELOPER_GUIDE.md) — architecture, schema, data flow, how to extend
 
-For the full feature spec and design decisions, see `MEALIE_AUTOMATION_PLAN.md`.
 For running project context and locked decisions, see `MEMORY.md`.
-**Read both before making changes** — several decisions (pickup-only, manual
+**Read it before making changes** — several decisions (pickup-only, manual
 checkout, Playwright over AI browsing, Ruby+ActiveRecord with one isolated
 Python file) are intentional and documented.
 
@@ -102,7 +101,7 @@ bundle exec ruby main.rb check
 # 5. Python side (cart_builder only)
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r cart_builder/requirements.txt
-playwright install --with-deps chromium
+playwright install chrome
 python3 cart_builder/cart.py --login   # interactive browser session setup
 deactivate
 export CART_BUILDER_PYTHON="$(pwd)/.venv/bin/python3"
@@ -225,7 +224,7 @@ any time ratings or cook history change.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r cart_builder/requirements.txt
-playwright install --with-deps chromium
+playwright install chrome
 
 # One-time interactive login to Food Lion — saves session to data/playwright_state.json
 python3 cart_builder/cart.py --login
@@ -330,6 +329,11 @@ mealie-autochef/
 │   ├── feedback_spec.rb
 │   ├── safety_spec.rb
 │   └── week_prefs_spec.rb
+│
+├── MEMORY.md                     # locked decisions, gotchas, verified state
+├── TESTING_HANDOFF.md            # agent briefing for test/feedback sessions
+├── testing_feedback.md           # bug history and known issues
+└── future_enhancements.md        # priority-ordered feature backlog
 │
 ├── docs/
 │   ├── SETUP_WALKTHROUGH.md
