@@ -6,7 +6,7 @@ This guide covers code structure, key abstractions, how to extend the system, an
 
 ## Architecture overview
 
-AutoChef is a **CLI batch job**, not a web app or long-running agent. Each command runs, does its work, and exits. The exception is `main.rb serve`, which runs the Telegram bot (blocking) and a rufus-scheduler (background threads) in the same process for the duration of the week.
+AutoChef is a **CLI batch job**, not a web app or long-running agent. Each command runs, does its work, and exits. The exception is `main.rb serve`, which runs the Telegram bot (blocking), a Sinatra web form on port 3456 (Puma, background thread), and a rufus-scheduler (background threads) in the same process for the duration of the week.
 
 ```
 config.yaml / .env
@@ -77,6 +77,9 @@ mealie-autochef/
 │   ├── reminders.rb               # thaw / morning-ping rufus-scheduler jobs
 │   ├── safety.rb                  # spending cap, kill switch, idempotency
 │   ├── feedback.rb                # post-week learning: times_cooked, tag_weights
+│   ├── week_prefs_source.rb       # WeekPrefs/DayPrefs structs + source interface
+│   ├── sinatra_prefs_source.rb    # DB-backed WeekPrefsSource implementation
+│   ├── web/app.rb                 # Sinatra form app — served at :3456/week
 │   └── models/
 │       ├── recipe_stat.rb
 │       ├── tag_weight.rb
@@ -84,9 +87,10 @@ mealie-autochef/
 │       ├── product_map.rb
 │       ├── manual_addition.rb
 │       ├── plan_history.rb
-│       └── order_history.rb
+│       ├── order_history.rb
+│       └── week_pref.rb
 │
-├── db/migrate/                    # 8 migrations, run by Database.migrate! at startup
+├── db/migrate/                    # 9 migrations, run by Database.migrate! at startup
 │
 ├── cart_builder/
 │   ├── cart.py                    # Playwright Food Lion automation (Python only)
@@ -208,6 +212,21 @@ CREATE TABLE plan_history (
 );
 CREATE INDEX ON plan_history (week_start);
 ```
+
+### `week_prefs`
+
+```sql
+CREATE TABLE week_prefs (
+  id           INTEGER   PRIMARY KEY,
+  week_start   DATE      NOT NULL UNIQUE,
+  prefs_json   TEXT      NOT NULL,  -- serialized WeekPrefs struct
+  created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX ON week_prefs (week_start);
+```
+
+Stores per-week plan preferences submitted via the Sinatra form (`/week`). Read by `cmd_plan` and `run_regenerate` in `main.rb` before calling `LlmPlanner`. One row per week (keyed by the Monday date). Overwritten if the form is resubmitted.
 
 ### `order_history`
 
@@ -333,6 +352,8 @@ Week is always **Sunday-anchored**. Perishability is measured from Sunday.
 
 Wraps `Planner` with a Claude Haiku call. Sends the deterministic plan + scored pool to the API and asks Claude to arrange and annotate. Validates the JSON response strictly; falls back to the deterministic plan on any parse failure, schema violation, or API error. A Claude failure can never break a run.
 
+`cmd_plan` and `run_regenerate` in `main.rb` load the current week's `WeekPrefs` from `SinatraPrefsSource` before calling `LlmPlanner` — protein excludes, layout overrides, servings overrides, and the combined note are all applied at that point.
+
 ```ruby
 llm = Autochef::LlmPlanner.new(cfg, planner: planner)
 result = llm.plan(pool:, scored_ids:, freeform_note: nil, recent_plans: [])
@@ -341,6 +362,32 @@ result.week_plan     # WeekPlan
 result.via_llm       # true | false
 result.llm_error     # String | nil (set on fallback)
 ```
+
+### `Autochef::WeekPrefsSource` / `Autochef::SinatraPrefsSource`
+
+`WeekPrefsSource` is the interface (two methods: `prefs_for(week_start)` and `save(week_start, prefs)`). `SinatraPrefsSource` is the DB-backed implementation backed by the `week_prefs` table.
+
+`WeekPrefs` and `DayPrefs` are plain structs (defined in `week_prefs_source.rb`):
+
+```ruby
+WeekPrefs = Struct.new(
+  :protein_excludes,   # Array<String> — e.g. ["seafood", "beef"]
+  :day_overrides,      # Hash<String, DayPrefs> — keyed by ISO date
+  :note,               # String | nil — freeform guidance appended to LLM prompt
+  keyword_init: true
+)
+
+DayPrefs = Struct.new(
+  :meal_type,          # "cook" | "leftover" | "skip" | nil (use config default)
+  :dinner_servings,    # Integer | nil
+  :lunch_servings,     # Integer | nil
+  :vibe,               # "normal" | "treat" | nil
+  :notes,              # String | nil
+  keyword_init: true
+)
+```
+
+The Sinatra form at `http://<host>:3456/week` is the only write path — no CLI command writes `week_prefs` directly.
 
 ### `Autochef::Notifier`
 
@@ -410,6 +457,9 @@ recipe pool (in-memory array of recipe hashes)
         │  Scorer.update_scores! — reads recipe_stats, tag_weights → writes score
         ▼
 scored_pool (scored_ids hash: recipe_id => Float)
+        │
+        │  SinatraPrefsSource.prefs_for(week_start) — protein excludes, layout overrides,
+        │  servings, freeform note (submitted via /week form; no-op if form not used)
         │
         │  Planner.plan — cook-day assignment, perishability ordering, warnings
         ▼
@@ -566,7 +616,7 @@ MEALIE_URL=http://localhost:9000   # add to .env
 
 ```bash
 bundle exec rspec
-# → 34 examples, 0 failures
+# → 44 examples, 0 failures
 ```
 
 Tests use in-memory SQLite (`:memory:`) and wrap each example in a transaction that rolls back — no `data/autochef.db` is touched. `spec/spec_helper.rb` runs all 8 migrations against the in-memory DB at suite startup.
@@ -585,6 +635,6 @@ SELECT * FROM order_history ORDER BY created_at DESC LIMIT 5;
 ## Known-fragile areas
 
 - **Cart builder** (`cart_builder/cart.py`) automates a consumer website not built for automation. Expect selector rot when Food Lion / Instacart ships UI changes. The `SELECTOR MAINTENANCE` section in `cart.py` documents the recovery procedure (Playwright Codegen). Keep `dry_run: true` and manual checkout as permanent defaults.
-- **Product map key matching** — `main.rb`'s `resolve_cart_item` looks up `product_map` by `item['note']` (Mealie display_name), but `product_map.key` is indexed by food_name (as seeded by `seed_product_map.rb`). When display_name ≠ food_name the lookup silently falls back to the raw item name. This surfaces as an "unmapped" warning even when the product is in the map.
+- **Product map key matching** — `main.rb`'s `resolve_cart_item` looks up `product_map` by `item['note']` (the Mealie shopping list item's display text). `seed_product_map.rb` keys entries by the same `note` text fetched from the live "Next Order" list, so they agree for standard use. The edge case: if a `ProductMap` record has a `display_name` override set, `push_ingredient` will write that override as the Mealie item `note`, which then won't match the product map's `food_name`-based key. Avoid setting `display_name` unless you also update the `key` to match.
 - **`est_total` never populated** — `cart.py`'s `run_build_cart` doesn't compute a pre-cart estimate, so `safety.deviation_warning` always receives `nil` and never fires.
 - **LLM output** — always JSON-validated with a deterministic fallback. A bad model response can never break a run; at worst it adds a `llm_error` note to the plan output.

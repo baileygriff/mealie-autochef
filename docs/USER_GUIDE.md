@@ -131,7 +131,17 @@ In Mealie: mark any food you always keep on hand as **"On Hand"** (the toggle on
 bundle exec ruby scripts/seed_product_map.rb
 ```
 
-Interactive — maps Mealie ingredient names to Food Lion search terms and pack sizes. Re-run any time new ingredients appear in your eligible recipes.
+Interactive — walks every item in the current Mealie "Next Order" shopping list and prompts you to map each one to a Food Lion search term, pack size, and default quantity. Run this after your first `main.rb shop`.
+
+**First run:** expect ~50 items spanning all your initial recipes. Most are one-and-done — once "salmon fillet" is mapped, it stays mapped forever.
+
+**Pantry staples** (water, salt, black pepper, olive oil): mark them "On Hand" in Mealie (see step 7) so they never appear in the list. Any that slip through can be mapped to a dummy search term — the cart builder will just find nothing and skip them.
+
+**Steady state:** most weeks need no seeding at all. New seeding is only needed when a brand-new recipe with previously-unseen ingredients enters your planning pool. `main.rb shop` will flag the unmapped items by name at the end of its output.
+
+**Flags:**
+- `--list` — show all existing mappings
+- `--update` — re-map already-mapped items (use after changing pack sizes or search terms)
 
 ### 9. Food Lion browser session
 
@@ -172,6 +182,7 @@ Sat  Salmon + Roasted Veg (2 servings)
 - **Swap [day]** — AutoChef re-picks that meal. Swaps are logged and feed into future scoring (the system learns which meals you actually want vs. keep accepting).
 - **Regenerate** — full re-draft. You can add a note first (see `/note` command below).
 - **Add note** — supply freeform guidance ("light week, no fish, something quick") and regenerate.
+- **⚙ Configure week** — opens the week configurator form (see below). Set your preferences, save, then tap Regenerate to apply them.
 
 ### Bot commands (available any time `main.rb serve` is running)
 
@@ -191,6 +202,45 @@ bundle exec ruby main.rb feedback
 ```
 
 Increments `times_cooked` for every recipe in the approved plan, updates `last_cooked`, and nudges `tag_weights` up for cuisine/protein tags you kept (didn't swap out). This feeds into next week's scoring. Run once after each grocery pickup.
+
+---
+
+## Week configurator
+
+When `main.rb serve` is running, a web form is available at:
+
+```
+http://192.168.1.64:3456/week       # from your local network / Tailscale
+```
+
+Use it before tapping Approve when you want to influence this week's plan. The Telegram plan message includes an **⚙ Configure week** button that links directly to this URL.
+
+### What you can configure
+
+**Per-day controls** (one row per cook day):
+
+| Control | What it does |
+|---|---|
+| Meal type | Override a day to cook / leftover / skip for this week only |
+| Dinner servings | How many portions to plan (overrides `default_servings`) |
+| Vibe | "Feed Me" (hearty/filling) or "Treat" (something special) |
+| Notes | Freeform guidance for that day ("no onions", "something quick") |
+
+**Global controls** (apply to the whole week):
+
+| Control | What it does |
+|---|---|
+| Protein exclude chips | Checkboxes: No Seafood / No Beef / No Pork / Vegetarian only |
+| Week note | Freeform guidance passed to Claude ("light week", "no fish") |
+
+### How it fits the workflow
+
+1. Receive the Telegram plan draft
+2. Tap **⚙ Configure week** → set your preferences → Save
+3. Tap **Regenerate** in Telegram — the new draft applies your preferences
+4. Tap **Approve**
+
+Preferences are saved per-week-start date. They persist in the local DB so a Regenerate always picks them up, even if you set them hours before the plan is generated. They have no effect after the plan is approved.
 
 ---
 
