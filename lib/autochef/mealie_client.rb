@@ -189,7 +189,8 @@ module Autochef
       resp = HTTParty.delete(
         "#{@base_url}/api/households/shopping/items/#{item_id}",
         headers: auth_headers,
-        timeout: 30
+        open_timeout: 10,
+        read_timeout: 30
       )
       handle_response!(resp)
     end
@@ -221,7 +222,8 @@ module Autochef
         "#{@base_url}#{path}",
         query: params.empty? ? nil : params,
         headers: auth_headers,
-        timeout: 30
+        open_timeout: 10,
+        read_timeout: 30
       )
       handle_response!(resp)
     end
@@ -231,7 +233,8 @@ module Autochef
         "#{@base_url}#{path}",
         body: body.to_json,
         headers: auth_headers,
-        timeout: 30
+        open_timeout: 10,
+        read_timeout: 30
       )
       handle_response!(resp)
     end
@@ -241,7 +244,8 @@ module Autochef
         "#{@base_url}#{path}",
         body: body.to_json,
         headers: auth_headers,
-        timeout: 30
+        open_timeout: 10,
+        read_timeout: 30
       )
       handle_response!(resp)
     end
