@@ -287,6 +287,7 @@ Dockerfile and `docker-compose.yml` already exist in `docker/`. Key consideratio
 - `headless=False` in `cart.py` requires a display (Xvfb) in Docker — needs `DISPLAY=:99` and `xvfb-run`
 - `playwright_state.json` must be volume-mounted (persists across container restarts)
 - Mealie URL switches from `http://192.168.1.64:3000` to `http://mealie:9000` on `mealie_net`
+- **TODO (test after deploy):** "⚙ Configure week" button URL uses `web.host` (192.168.1.64) — verify the link opens correctly from Telegram once the container is running on Unraid
 
 ### 12. Uptime Kuma Push Monitor
 

@@ -81,6 +81,7 @@ mealie-autochef-ruby/
 ├── HANDOFF.md                     # Orientation doc — read before touching code
 ├── TESTING_HANDOFF.md             # This file — agent briefing for test/feedback sessions
 ├── testing_feedback.md            # Bug history, known issues, cart.py state, test suite
+├── testing_verifications.md       # Per-feature verification status (✅ tested / ❌ untested / 🔧 needs test)
 ├── future_enhancements.md         # Full feature specs and priority-ordered backlog
 ├── README.md                      # Setup and CLI reference
 └── docs/
@@ -91,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (ninth session)
+## Current state as of 2026-06-28 (tenth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -105,17 +106,19 @@ mealie-autochef-ruby/
 | Python venv + Playwright | ✓ | `.venv/bin/python3`, playwright 1.60 |
 | `CART_BUILDER_PYTHON` in `.env` | ✓ | Points to `.venv/bin/python3` |
 | Food Lion login | ✓ | Re-done with full auth + 2FA, `playwright_state.json` refreshed |
-| `main.rb plan` (LLM) | ✓ | plan_history id=4 approved |
+| `main.rb plan` (LLM) | ✓ | plan_history id=5 approved (with 1 swap — Pulled Pork → Chicken Breasts) |
 | `main.rb serve` | ✓ | Bot + Sinatra form both start cleanly |
-| Telegram approval | ✓ | Plan id=4 approved |
-| `main.rb shop` | ✓ | 59 items pushed to Mealie "Next Order" |
-| `seed_product_map.rb` | ✓ | All items mapped or pantry-skipped |
-| `main.rb build-cart` | ✓ | 24/24 items added (consolidated), $119.45 total, 0 flagged |
-| Week configurator (Sinatra form) | ✓ | Running at http://localhost:3456/week |
+| Telegram approval + swap | ✓ | Swap flow + approval both confirmed with plan id=5 |
+| `main.rb shop` | ✓ | 35 items pushed to Mealie "Next Order" (plan id=5 recipes) |
+| `seed_product_map.rb` | ✓ | Covered by plan id=4; plan id=5 unmapped (skipped — Feature 6 will replace) |
+| `main.rb build-cart` | ✓ | 24/24 items added (consolidated), $119.45 total, 0 flagged (plan id=4) |
+| Week configurator (Sinatra form) | ✓ | Starts clean; Telegram link TODO until Docker deploy on Unraid |
 | Enhancement 2 — LLM qty consolidation | ✓ | `lib/autochef/llm_qty_consolidator.rb`; runs after Enhancement 1 pass |
 | Telegram UX: Food Lion link, /shop, screenshot | ✓ | Markdown link, /shop bot command, photo upload |
 | `est_total` populated in cart.py output | ✓ | Now set to `cart_total`; deviation_warning can execute |
 | Crash alert on plan failure | ✓ | `Notifier.send_crash_alert`; top-level rescue in `cmd_plan` |
+| `/wrapup` session skill | ✓ | `.claude/commands/wrapup.md` — updates all docs + commits/pushes |
+| `testing_verifications.md` | ✓ | Per-feature verification tracker; linked from README + TESTING_HANDOFF |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
@@ -232,7 +235,7 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
 
-### New features (feedback items 1–4 cleared in ninth session)
+### New features (feedback items 1–4 cleared in ninth session; no new features in tenth)
 5. Debug screenshots
 6. LLM Assisted Recipe Mapping (auto_map.rb — replaces manual seed script; auto-runs after /newrecipes)
 7. LLM Cart Review (auto after build-cart, screenshot+vision, auto-apply corrections)
@@ -251,9 +254,10 @@ bundle exec ruby scripts/seed_product_map.rb
 
 1. Read this file in full
 2. Read [testing_feedback.md](testing_feedback.md) — known issues and recent bugs
-3. Read [future_enhancements.md](future_enhancements.md) — the full feature queue with specs
-4. Run `bundle exec ruby main.rb check` to verify connectivity
-5. Check DB state:
+3. Read [testing_verifications.md](testing_verifications.md) — per-feature verification status
+4. Read [future_enhancements.md](future_enhancements.md) — the full feature queue with specs
+5. Run `bundle exec ruby main.rb check` to verify connectivity
+6. Check DB state:
    ```bash
    bundle exec ruby -e "
      require_relative 'lib/autochef/database'
@@ -264,6 +268,6 @@ bundle exec ruby scripts/seed_product_map.rb
      puts \"Product map entries: #{Autochef::Models::ProductMap.count}\"
    "
    ```
-6. Pick up from "What's coming next" above — **feedback items before new features**
+7. Pick up from "What's coming next" above — **feedback items before new features**
 
 At the end of each session, update this file: mark completed steps, add newly discovered bugs, and update "What's coming next." Move bug details to [testing_feedback.md](testing_feedback.md). Move new feature specs to [future_enhancements.md](future_enhancements.md).

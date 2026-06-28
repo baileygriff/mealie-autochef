@@ -8,6 +8,8 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 None — all feedback items are cleared. See [future_enhancements.md](future_enhancements.md) for the new-features queue.
 
+For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
+
 ---
 
 ## Test Suite State (2026-06-28, 44 examples, 0 failures)
@@ -75,6 +77,28 @@ Run `bundle exec ruby scripts/seed_product_map.rb --list` to inspect all entries
 | easy-pan-roasted-pork-tenderloin-with-bourbon-soaked-figs-recipe | american | pork | quick | no |
 | lemon-pasta-with-salmon | mediterranean | seafood | quick | no |
 | fish-tacos-recipe | mexican | seafood | quick | no |
+
+---
+
+## Implemented — 2026-06-28 (tenth session)
+
+**End-to-end test run (partial — stopped before build-cart)**
+Full run through check → plan → serve → shop confirmed clean. Plan id=5 generated (Fish Tacos, Chicken Breasts with Lemon, Potato-Leek Soup, Mushroom Risotto); swap flow + Telegram approval verified. `main.rb shop` pushed 35 items; all unmapped (new recipes). Skipped manual seeding — Feature 6 (LLM Assisted Recipe Mapping) will replace `seed_product_map.rb` entirely.
+
+**Stale test artifacts removed from recipe_stats**
+4 rows (`r1`, `r2`, `r3`, `r4`) from a past debug session were present in the live DB. Removed via one-off script. Test suite correctly uses `:memory:` SQLite and transaction rollback — these were not from rspec.
+
+**`testing_verifications.md` created**
+New document tracking per-feature verification status (✅ tested / ❌ untested / 🔧 implemented-not-tested). Covers all CLI commands, Telegram flows, cart builder steps, product map, week configurator, scripts, and safety features. Linked from README and TESTING_HANDOFF.
+File: `testing_verifications.md`
+
+**`/wrapup` project skill created**
+`.claude/commands/wrapup.md` — end-of-session skill that gathers git diff context, updates all docs (TESTING_HANDOFF, testing_feedback, future_enhancements, README, memory), commits, and pushes.
+File: `.claude/commands/wrapup.md`
+
+**Configure-week Telegram link TODO**
+"⚙ Configure week" inline button uses `web.host` (192.168.1.64 — the Unraid IP). This only resolves correctly when running on Unraid. Added TODO comment in `notify.rb` and `future_enhancements.md` §11 (Docker deploy).
+File: `lib/autochef/notify.rb`
 
 ---
 

@@ -779,6 +779,8 @@ module Autochef
       keyboard_rows = []
 
       if @cfg.respond_to?(:web) && @cfg.web&.enabled
+        # TODO: test this link after Docker deployment on Unraid — web.host (192.168.1.64) won't
+        # resolve correctly when serve is running on the local dev machine instead of the Unraid box.
         web_url = "http://#{@cfg.web.host}:#{@cfg.web.port}/week"
         keyboard_rows << [
           Telegram::Bot::Types::InlineKeyboardButton.new(

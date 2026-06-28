@@ -18,6 +18,9 @@ For running project context and locked decisions, see `MEMORY.md`.
 checkout, Playwright over AI browsing, Ruby+ActiveRecord with one isolated
 Python file) are intentional and documented.
 
+For testing status (what's been verified end-to-end vs. still needs testing), see
+[testing_verifications.md](testing_verifications.md).
+
 ---
 
 ## What it does
@@ -333,6 +336,7 @@ mealie-autochef/
 ├── MEMORY.md                     # locked decisions, gotchas, verified state
 ├── TESTING_HANDOFF.md            # agent briefing for test/feedback sessions
 ├── testing_feedback.md           # bug history and known issues
+├── testing_verifications.md      # per-feature verification status (✅/❌/🔧)
 └── future_enhancements.md        # priority-ordered feature backlog
 │
 ├── docs/
