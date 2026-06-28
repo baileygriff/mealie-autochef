@@ -1,0 +1,1 @@
+Read TESTING_HANDOFF.md in full, then read testing_feedback.md and future_enhancements.md. Check memory at ~/.claude/projects/-Users-baileygriffin-Projects-mealie-autochef-ruby/memory/. Pick up from "What's coming next" in TESTING_HANDOFF.md — address feedback items before new features.
