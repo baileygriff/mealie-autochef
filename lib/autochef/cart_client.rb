@@ -17,9 +17,6 @@ module Autochef
     class CartBuilderError < StandardError; end
 
     PYTHON_SCRIPT = File.expand_path('../../cart_builder/cart.py', __dir__)
-    # Assumes a venv with cart_builder/requirements.txt installed is on
-    # PATH as `python3` inside the container — see docker/Dockerfile.
-    PYTHON_BIN = ENV.fetch('CART_BUILDER_PYTHON', 'python3')
 
     # input: a Hash matching cart.py's INPUT_SCHEMA (run_key, store_name,
     #   pickup_window_pref, spending_cap_usd, cart_deviation_alert_pct,
@@ -29,8 +26,10 @@ module Autochef
     # per the contract, those are real crashes, distinct from a clean
     # {"status": "aborted", ...} response.
     def self.build_cart(input)
+      # Read at call time so Dotenv.load (via Config.load) has already run.
+      python_bin = ENV.fetch('CART_BUILDER_PYTHON', 'python3')
       stdout_str, stderr_str, status = Open3.capture3(
-        PYTHON_BIN, PYTHON_SCRIPT,
+        python_bin, PYTHON_SCRIPT,
         stdin_data: input.to_json
       )
 
