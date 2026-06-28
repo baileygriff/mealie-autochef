@@ -242,6 +242,22 @@ File: `lib/autochef/llm_planner.rb`
 
 ---
 
+## Implemented — 2026-06-28 third session
+
+**Week configurator (Sinatra form)**
+Per-week plan preferences form at http://192.168.1.64:3456/week (Tailscale-accessible).
+Per-day controls: meal type (cook/leftover/skip), dinner/lunch servings, vibe (Feed Me/Treat), dietary notes.
+Global controls: protein-exclude chips (No Seafood/Beef/Pork, Vegetarian only), freeform note.
+`main.rb serve` starts the form in a background thread. Plan draft message now shows a "⚙ Configure week" button.
+`main.rb plan` and regenerate in the bot both apply saved prefs before calling LlmPlanner.
+Key files: `lib/autochef/sinatra_prefs_source.rb`, `lib/autochef/web/app.rb`, migration 009.
+
+**`spec/config_spec.rb` Dotenv leak fixed**
+The config spec's around hook now uses a real empty temp `.env` file (instead of `/nonexistent/.env`)
+so `Dotenv.load` doesn't load the project `.env` and pollute test fixtures with `MEALIE_URL`.
+
+---
+
 ## Known issues (not yet fixed)
 
 **`est_total` never populated (deviation warning can't fire)**
@@ -267,7 +283,7 @@ bundle exec ruby main.rb check
 bundle exec ruby main.rb plan
 
 # Start the Telegram bot (long-running — handles Approve/Swap/Regen buttons)
-# Also starts Sinatra week configurator on port 3456 (once implemented)
+# Also starts Sinatra week configurator on port 3456 (http://localhost:3456/week)
 bundle exec ruby main.rb serve
 
 # After approving — generate Mealie shopping list
