@@ -81,6 +81,21 @@ Run `bundle exec ruby scripts/seed_product_map.rb --list` to inspect all entries
 
 ---
 
+## Implemented / Fixed — 2026-06-28 (fifteenth session)
+
+**Feature: Session expiry detection (Option 1)**
+`detect_session_state(page)` added to `cart.py`. Called immediately after `navigate_to_store()` in `run_build_cart()`. Checks for Kasada challenge elements (`[data-kpsdk-v]`, `#kp-captcha`), challenge-like page titles ("just a moment", "please wait"), login URL redirects, and visible sign-in buttons. Returns `"kasada_challenge"`, `"login_required"`, or `"valid"`. If not valid, returns `make_output("session_expired", abort_reason=reason)` — clean exit (code 0), not a crash. `main.rb` routes the new `"session_expired"` status to `send_session_expired_alert` in `notify.rb`. Alert sends a context-specific explanation + `[✅ Session Refreshed — Rebuild Cart]` inline button. `callback_session_refresh` edits the alert message and spawns `build-cart --force` in a background thread (same pattern as `/shop`). OUTPUT_SCHEMA docstring updated to add `"session_expired"` as a valid status value.
+Files: `cart_builder/cart.py`, `main.rb`, `lib/autochef/notify.rb`
+
+**Note: FlareSolverr ruled out for Option 2**
+FlareSolverr (already on Unraid) is Cloudflare-specific and cannot solve Kasada challenges. CapSolver is the right tool. Full Option 2 spec (CapSolver Kasada auto-solving, setup walkthrough, failure fallback) added to `future_enhancements.md`.
+File: `future_enhancements.md`
+
+**Discovery: Food Lion sessions expire frequently**
+Confirmed in this session that the `playwright_state.json` session can expire within hours of being refreshed (or Kasada re-challenges on each new run). The root cause is unclear — could be cookie TTL, IP-based detection, or Kasada triggering even with real Chrome + stealth args. Option 1 now surfaces this cleanly instead of crashing. Option 2 (CapSolver) will fully automate the Kasada case when implemented.
+
+---
+
 ## Implemented / Fixed — 2026-06-28 (fourteenth session)
 
 **Bug: `PREV_PURCHASES_URL` pointed at the wrong page**

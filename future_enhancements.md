@@ -16,11 +16,124 @@ Items 1–4 completed in the ninth session (2026-06-28). See [testing_feedback.m
 - ✅ `/add` multi-item LLM flow — `LlmItemParser`, preview/confirm/edit/cancel, cart rebuild (twelfth session)
 - ✅ Automap Telegram report reformatted — two sections: Grocery additions (bullet, qty/unit) + Pantry skips (compact comma list) (twelfth session)
 - 🔧 Previous Purchases cart optimization — `add_from_previous_purchases` in `cart_builder/cart.py`; tries Food Lion's "My Items / Previous Purchases" section before search, adds matched items by brand/variant, falls back gracefully to search for unmatched. `previous_purchases_stats` in output. **Needs live build-cart test (thirteenth session)**
+- ✅ Session Expiry Detection (Option 1) — `detect_session_state()` in `cart.py`; returns `"session_expired"` status to main.rb; Telegram alert with `[✅ Session Refreshed → Rebuild Cart]` inline button; `callback_session_refresh` spawns build-cart --force in background thread
+- 🗂️ CapSolver Kasada Auto-solving (Option 2) — see spec below
 - 🗂️ Modular Testability Refactor — see spec below
 
 ---
 
 ## Feedback / Improvements (pending)
+
+### CapSolver Kasada Auto-solving (Option 2)
+
+**Goal:** Make the Food Lion cart build fully hands-off by automatically solving Kasada bot-detection challenges without any manual browser interaction. Complements Option 1 (session expiry detection) — Option 2 handles Kasada challenges; Option 1 handles actual login expiry.
+
+**Background — two distinct failure modes:**
+
+| Mode | What happened | What fixes it |
+|---|---|---|
+| `kasada_challenge` | Kasada's bot-detection showed a challenge page | CapSolver can auto-solve → no human needed |
+| `login_required` | Session cookie genuinely expired; Food Lion redirected to sign-in | CapSolver cannot help → must re-login manually (Option 1 alert) |
+
+Option 2 only fires for `kasada_challenge`. If the reason is `login_required`, it falls through to the Option 1 Telegram alert regardless of whether CapSolver is configured.
+
+**Why not FlareSolverr (already on Unraid)?** FlareSolverr is Cloudflare-specific (CF_Clearance, Turnstile). Food Lion uses Kasada — a different vendor with an incompatible challenge protocol. FlareSolverr has no Kasada support.
+
+**Why CapSolver:** Has an explicit Kasada task type (`AntiKasadaTask`), official Python SDK (`capsolver`), and the cost at weekly frequency is negligible (~$0.001/solve).
+
+---
+
+**Trigger:** Automatic when `CAPSOLVER_API_KEY` is set in `.env`. No config.yaml toggle needed — remove the key to disable.
+
+**Failure behavior:** If CapSolver fails (API down, balance exhausted, bad token, timeout), fall back to the Option 1 Telegram alert — same `[✅ Session Refreshed → Rebuild Cart]` button flow. Cart build is deferred, not lost.
+
+---
+
+**Implementation (in order):**
+
+1. **Install CapSolver Python SDK**
+   ```
+   # Add to cart_builder/requirements.txt
+   capsolver>=1.0.0
+   # Then: source .venv/bin/activate && pip install -r cart_builder/requirements.txt
+   ```
+
+2. **Add to `.env`**
+   ```
+   CAPSOLVER_API_KEY=CAP-xxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+
+3. **`cart_builder/cart.py` — new `solve_kasada_challenge(page)` function**
+   ```python
+   import capsolver
+
+   def solve_kasada_challenge(page: Page) -> bool:
+       """
+       Attempt to solve a Kasada challenge via CapSolver.
+       Returns True if solved and page is past the challenge, False otherwise.
+       """
+       api_key = os.environ.get("CAPSOLVER_API_KEY", "")
+       if not api_key:
+           return False
+
+       capsolver.api_key = api_key
+       try:
+           log("  CapSolver: solving Kasada challenge...")
+           solution = capsolver.solve({
+               "type": "AntiKasadaTask",
+               "pageURL": page.url,
+               "pageAction": "pta-handle-checkout",
+           })
+           # Inject the solution token into the page
+           page.evaluate(f"window.__kpsdk_answer = '{solution.get('token', '')}'")
+           page.reload(wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+           pace(2000)
+           # Re-check session state after reload
+           return detect_session_state(page) == "valid"
+       except Exception as e:
+           log(f"  CapSolver: failed — {e}")
+           return False
+   ```
+
+   Note: The exact CapSolver task type and token injection method for Kasada should be verified at implementation time against the current CapSolver docs (https://docs.capsolver.com). Kasada's client-side API changes periodically.
+
+4. **`run_build_cart()` — attempt solve before returning `session_expired`**
+   ```python
+   session_state = detect_session_state(page)
+   if session_state == "kasada_challenge":
+       log("Kasada challenge detected — attempting CapSolver auto-solve...")
+       if solve_kasada_challenge(page):
+           log("  CapSolver: solved successfully — continuing build")
+           session_state = "valid"
+       else:
+           log("  CapSolver: solve failed — falling back to manual refresh alert")
+   if session_state != "valid":
+       return make_output("session_expired", abort_reason=session_state)
+   ```
+
+5. **`main.rb` / `notify.rb`:** No changes needed — the `session_expired` fallback path from Option 1 handles the CapSolver failure case automatically.
+
+---
+
+**CapSolver setup instructions (do this when implementing):**
+
+1. Go to https://capsolver.com and create an account
+2. Top up balance — $5 is enough for years of weekly use at ~$0.001/solve
+3. Go to Dashboard → API Key → copy your key
+4. Add `CAPSOLVER_API_KEY=CAP-your-key-here` to `.env`
+5. `source .venv/bin/activate && pip install capsolver`
+6. Test: `python3 -c "import capsolver; capsolver.api_key='CAP-your-key'; print(capsolver.balance())"`
+
+**Unraid note:** `CAPSOLVER_API_KEY` goes in the Docker env vars (same as the other secrets). No VNC or display needed — CapSolver's solve happens over HTTPS, not in the browser.
+
+---
+
+**Key files to touch:**
+- `cart_builder/requirements.txt` — add `capsolver>=1.0.0`
+- `cart_builder/cart.py` — `solve_kasada_challenge()`, update `run_build_cart()` logic
+- `.env` / `.env.example` — `CAPSOLVER_API_KEY`
+
+---
 
 ### Modular Testability Refactor
 

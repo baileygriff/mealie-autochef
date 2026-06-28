@@ -47,7 +47,7 @@ INPUT_SCHEMA (stdin, JSON):
 
 OUTPUT_SCHEMA (stdout, JSON):
   {
-    "status": "cart_built" | "aborted",
+    "status": "cart_built" | "aborted" | "session_expired",
     "abort_reason": str | null,          # set when status == "aborted"
     "est_total": float | null,
     "cart_total": float | null,
@@ -562,6 +562,50 @@ def navigate_to_store(page: Page, store_name: str) -> bool:
     return True
 
 
+def detect_session_state(page: Page) -> str:
+    """
+    Called immediately after navigate_to_store() to catch auth failures early.
+    Returns "kasada_challenge", "login_required", or "valid".
+
+    Kasada challenge: Food Lion's bot-detection page loaded instead of the store.
+    Login required: session cookie expired and Food Lion redirected to the sign-in page.
+    Both cases require running: python3 cart_builder/cart.py --login
+    """
+    url = page.url.lower()
+
+    # Login redirect — session cookie gone, Food Lion sent us to a sign-in page.
+    if any(kw in url for kw in ("login", "signin", "sign-in", "/account")):
+        log(f"  Session check: login redirect detected ({page.url})")
+        return "login_required"
+
+    # Kasada challenge — bot-detection page loaded at the original URL.
+    # data-kpsdk-v is the Kasada SDK version attribute injected on challenge pages.
+    try:
+        if page.locator('[data-kpsdk-v], #kp-captcha').count() > 0:
+            log("  Session check: Kasada challenge element detected")
+            return "kasada_challenge"
+    except Exception:
+        pass
+
+    title = page.title().lower()
+    if any(kw in title for kw in ("just a moment", "please wait", "checking your browser", "enable javascript")):
+        log(f"  Session check: challenge-like title: {page.title()!r}")
+        return "kasada_challenge"
+
+    # Sign-in button visible in the main viewport (not just a nav item).
+    # Indicates session dropped without a URL redirect.
+    try:
+        for sel in ('button:has-text("Sign In")', '[data-testid*="sign-in-button"]'):
+            loc = page.locator(sel).first
+            if loc.count() > 0 and loc.is_visible():
+                log(f"  Session check: sign-in button visible ({sel})")
+                return "login_required"
+    except Exception:
+        pass
+
+    return "valid"
+
+
 def set_pickup_mode(page: Page) -> bool:
     """
     Ensure the order mode is set to Pickup (not Delivery).
@@ -1050,7 +1094,13 @@ def run_build_cart(payload: dict) -> dict:
             # 1. Navigate to Food Lion To Go
             navigate_to_store(page, store_name)
 
-            # 1b. Clear any items left from a previous run before adding fresh
+            # 1b. Verify session is still valid — catch Kasada/login issues early.
+            session_state = detect_session_state(page)
+            if session_state != "valid":
+                log(f"Session issue: {session_state} — aborting build, refresh required")
+                return make_output("session_expired", abort_reason=session_state)
+
+            # 1c. Clear any items left from a previous run before adding fresh
             clear_cart(page)
 
             # 2. Ensure pickup mode

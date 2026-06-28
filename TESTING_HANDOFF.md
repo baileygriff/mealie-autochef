@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (fourteenth session)
+## Current state as of 2026-06-28 (fifteenth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -125,7 +125,9 @@ mealie-autochef-ruby/
 | Testing practice standard | ✓ | Documented in "Testing practice" section; decision table, pre-define success/failure, prefer specs |
 | `spec/manual_addition_spec.rb` | ✓ | 6 examples; tests ManualAddition model, resolve logic, pending scope (50 total, 0 failures) |
 | Previous Purchases URL fix | ✓ | `PREV_PURCHASES_URL` corrected to `/past-purchases`; `SEL_MY_ITEMS_LINK` updated; tab click removed |
-| Previous Purchases card selectors | 🔧 | URL now correct; `SEL_PREV_PRODUCT_CARD`/`SEL_PREV_PRODUCT_NAME` still unverified — run `build-cart --force` to confirm 0→N |
+| Session expiry detection (Option 1) | ✓ | `detect_session_state()` in `cart.py`; `session_expired` status; Telegram alert + inline rebuild button |
+| CapSolver Kasada auto-solving (Option 2) | 🗂️ | Spec in future_enhancements.md; not yet implemented |
+| Previous Purchases card selectors | 🔧 | URL correct; `SEL_PREV_PRODUCT_CARD`/`SEL_PREV_PRODUCT_NAME` still unverified — `build-cart --force` after login refresh |
 | Modular Testability Refactor | 🗂️ | Planned in future_enhancements.md; not yet implemented |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
@@ -225,6 +227,10 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **Past Purchases URL is confirmed** — Food Lion's past purchases page is at `https://www.foodlion.com/past-purchases` (confirmed 2026-06-28; `PREV_PURCHASES_URL` updated). There is no "My Items" tab — it's a direct page in the top nav under "Past Purchases". `SEL_PREV_PURCHASES_TAB` is now an empty list (no tab click needed). `SEL_PREV_PRODUCT_CARD` and `SEL_PREV_PRODUCT_NAME` are still best-guess Instacart DOM patterns — if the Previous Purchases pass reports 0 items found despite real past purchases being present, run `playwright codegen https://www.foodlion.com/past-purchases`, inspect the card container and name elements, and update those two constants. The feature falls back to full search if it finds 0 cards — existing behavior is never regressed.
 
+**Food Lion sessions expire frequently — possibly within hours.** The Kasada bot-detection challenge (or actual cookie expiry) can trigger on any new build-cart run. `detect_session_state()` in `cart.py` now catches this early (immediately after `navigate_to_store`) and returns `"session_expired"` with `abort_reason: "kasada_challenge"` or `"login_required"` instead of crashing. `main.rb` sends a Telegram alert with a `[✅ Session Refreshed — Rebuild Cart]` inline button. To fix: run `source .venv/bin/activate && python3 cart_builder/cart.py --login`, solve the challenge, log in, complete 2FA, press Enter. Then tap the Telegram button to rebuild. See Option 2 (CapSolver) in `future_enhancements.md` for a fully automated path.
+
+**FlareSolverr cannot solve Kasada.** FlareSolverr (already on Unraid) is Cloudflare-specific (CF_Clearance / Turnstile). Food Lion uses Kasada — a different vendor. FlareSolverr has no Kasada support and cannot be used here. CapSolver is the right tool for Option 2.
+
 **`LlmRecipeMapper` uses numbered items + index echo** — items sent as `1. {note}`, `2. {note}`, ...  and the LLM must return `"index": N` in each response. The save loop uses `unmapped[index - 1]['note']` as the product_map key, NOT `s['ingredient_name']`. This ensures keys match what `resolve_cart_item` looks up (the full Mealie note). Do not revert to using `s['ingredient_name']` as the key — it strips quantity prefixes and breaks the lookup.
 
 **`/add` flow with LLM enabled** — `cmd_add` routes to `cmd_add_llm` which shows a preview with [✅ Add to cart] [✏️ Edit] [❌ Cancel] buttons before touching Mealie. Pending state `{ action: :waiting_add_confirmation, items: [...] }` is stored in `@pending_states[chat_id]`. Confirmation triggers `execute_add_items` which saves ManualAddition records, pushes to Mealie, and spawns `build-cart --force` in a background thread.
@@ -289,7 +295,12 @@ If you're not sure what success looks like, **ask Bailey** — no assumptions.
 9. Recipe Sleep feature
 10. LLM Recipe Suggestions (`/newrecipes`)
 
-### Added this session (fourteenth)
+### Added this session (fifteenth)
+- ✓ **Session expiry detection (Option 1)** — `detect_session_state()` in `cart.py` detects Kasada bot-detection challenges and login redirects immediately after `navigate_to_store()`. Returns `"session_expired"` status (clean exit, not crash) with `abort_reason` of `"kasada_challenge"` or `"login_required"`. `main.rb` routes to `send_session_expired_alert` which sends a context-aware Telegram message + `[✅ Session Refreshed — Rebuild Cart]` inline button. `callback_session_refresh` edits the message and spawns `build-cart --force` in a background thread.
+- 🗂️ **CapSolver Kasada auto-solving (Option 2)** — full spec in `future_enhancements.md`. Adds `solve_kasada_challenge()` to `cart.py`; auto-fires when `CAPSOLVER_API_KEY` set in `.env`; only handles `kasada_challenge` (not `login_required`); falls back to Option 1 alert on failure. Setup walkthrough included in spec.
+- ✓ **FlareSolverr ruled out** — already on Unraid but is Cloudflare-specific (CF_Clearance/Turnstile); has no Kasada support and cannot be used here.
+
+### Added in fourteenth session
 - ✓ **Previous Purchases URL confirmed and fixed** — `PREV_PURCHASES_URL` corrected from `/shop/my_items` to `/past-purchases` (confirmed from live account screenshot). `SEL_MY_ITEMS_LINK` updated for "Past Purchases" nav link. `SEL_PREV_PURCHASES_TAB` emptied (no tab — direct page). URL check updated to accept `past-purchases`. **Card selectors still unverified** — run `build-cart --force` and check for PP pass item count > 0. If still 0, run `playwright codegen https://www.foodlion.com/past-purchases` and update `SEL_PREV_PRODUCT_CARD` / `SEL_PREV_PRODUCT_NAME`.
 - ✓ **Testing practice standard** — new section in TESTING_HANDOFF; decision table (fastest loop per scenario), pre-define success/failure rule, prefer specs over live runs, ask-if-stuck rule.
 - ✓ **`spec/manual_addition_spec.rb`** — 6 examples: ManualAddition pending scope, resolve logic (ProductMap lookup + fallback), persistence invariant. 50 total, 0 failures.

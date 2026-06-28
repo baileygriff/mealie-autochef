@@ -806,6 +806,15 @@ def cmd_build_cart(force: false)
       puts "Telegram notification sent."
     end
 
+  when 'session_expired'
+    reason = result['abort_reason'] || 'session_expired'
+    puts "Food Lion session issue (#{reason}) — cart build paused, waiting for manual refresh."
+    write_order_history(run_key, history, result, notes: reason)
+    if cfg.notify.channel == 'telegram' && !cfg.notify.telegram_bot_token.to_s.empty?
+      Autochef::Notifier.new(cfg, mealie_client: client).send_session_expired_alert(reason)
+    end
+    return 1
+
   when 'aborted'
     reason = result['abort_reason'] || 'Unknown abort reason'
     puts "Cart build aborted: #{reason}"

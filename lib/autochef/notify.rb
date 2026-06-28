@@ -160,6 +160,38 @@ module Autochef
       bot_api.send_message(chat_id: @chat_id, text: text, parse_mode: 'Markdown')
     end
 
+    def send_session_expired_alert(reason)
+      context_line = case reason
+                     when 'kasada_challenge' then "Food Lion showed a bot-detection challenge."
+                     when 'login_required'   then "Your Food Lion session cookie has expired."
+                     else                         "The session check failed (#{reason})."
+                     end
+
+      text = [
+        "🔐 *Food Lion session needs refresh*",
+        "",
+        context_line,
+        "AutoChef can't build the cart until the session is restored.",
+        "",
+        "*Run this on your Mac:*",
+        "`source .venv/bin/activate && python3 cart_builder/cart.py --login`",
+        "",
+        "Solve the verification → log in → complete 2FA → press Enter.",
+        "Then tap the button below to rebuild the cart.",
+      ].join("\n")
+
+      keyboard = Telegram::Bot::Types::InlineKeyboardMarkup.new(
+        inline_keyboard: [[
+          Telegram::Bot::Types::InlineKeyboardButton.new(
+            text: '✅ Session Refreshed — Rebuild Cart',
+            callback_data: 'session_refresh'
+          )
+        ]]
+      )
+      bot_api.send_message(chat_id: @chat_id, text: text,
+                           reply_markup: keyboard, parse_mode: 'Markdown')
+    end
+
     # -------------------------------------------------------------------------
     # Reminder notifications (Phase 6) — called by Reminders scheduler jobs
     # -------------------------------------------------------------------------
@@ -333,9 +365,10 @@ module Autochef
       when 'swap'         then callback_swap(bot, query, plan_id, param)
       when 'regenerate'   then callback_regenerate(bot, query, plan_id)
       when 'add_note'     then callback_add_note(bot, query, plan_id)
-      when 'add_confirm'  then callback_add_confirm(bot, query)
-      when 'add_edit'     then callback_add_edit(bot, query)
-      when 'add_cancel'   then callback_add_cancel(bot, query)
+      when 'add_confirm'      then callback_add_confirm(bot, query)
+      when 'add_edit'         then callback_add_edit(bot, query)
+      when 'add_cancel'       then callback_add_cancel(bot, query)
+      when 'session_refresh'  then callback_session_refresh(bot, query)
       end
 
       bot.api.answer_callback_query(callback_query_id: query.id)
@@ -687,6 +720,21 @@ module Autochef
       @pending_states.delete(chat_id)
       bot.api.answer_callback_query(callback_query_id: query.id)
       reply(bot, chat_id, "Cancelled — nothing was added.")
+    end
+
+    def callback_session_refresh(bot, query)
+      bot.api.edit_message_text(
+        chat_id:    query.message.chat.id,
+        message_id: query.message.message_id,
+        text:       "✅ Got it — rebuilding cart now. I'll message you when it's done.",
+      )
+      project_root = File.expand_path('../..', __dir__)
+      Thread.new do
+        system('bundle', 'exec', 'ruby', "#{project_root}/main.rb", 'build-cart', '--force',
+               chdir: project_root)
+      rescue StandardError => e
+        warn "callback_session_refresh background thread error: #{e.message}"
+      end
     end
 
     # Pushes confirmed items to Mealie and spawns a cart rebuild.
