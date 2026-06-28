@@ -92,13 +92,13 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (fourth session)
+## Current state as of 2026-06-28 (fifth session)
 
 ### What's been completed
 
 | Step | Status | Notes |
 |---|---|---|
-| `bundle install` | ✓ | 72 gems (rackup added this session) |
+| `bundle install` | ✓ | 72 gems |
 | `.env` filled in | ✓ | All secrets present |
 | `config.yaml` filled in | ✓ | See config decisions below |
 | `main.rb check` | ✓ | `Result: OK`, Mealie v3.19.2 connected |
@@ -108,15 +108,22 @@ mealie-autochef-ruby/
 | Python venv + Playwright | ✓ | `.venv/bin/python3`, playwright 1.60 |
 | `CART_BUILDER_PYTHON` in `.env` | ✓ | Points to `.venv/bin/python3` |
 | Food Lion login | ✓ | `data/playwright_state.json` saved, 5.1KB |
-| `main.rb plan` (LLM) | ✓ | Working — plan_history id=4 approved |
+| `main.rb plan` (LLM) | ✓ | plan_history id=4 approved |
 | `main.rb serve` | ✓ | Bot + Sinatra form both start cleanly |
-| Telegram approval | ✓ | Plan id=4 approved; `last_planned` stamped on 4 recipes |
-| `main.rb shop` | ✓ | 54 items pushed to Mealie "Next Order" |
-| `seed_product_map.rb` | **NEXT** | Script fixed; Bailey runs it interactively |
-| `main.rb build-cart` | **NOT YET** | After seed_product_map |
+| Telegram approval | ✓ | Plan id=4 approved |
+| `main.rb shop` | ✓ | 59 items pushed to Mealie "Next Order" |
+| `seed_product_map.rb` | ✓ | All items mapped or pantry-skipped |
+| `main.rb build-cart` | **NEXT** | Just fixed CART_BUILDER_PYTHON bug — ready to run |
 | Week configurator (Sinatra form) | ✓ | Implemented + documented |
-| Docker deployment | **NOT YET** | After local flow verified |
+| Docker deployment | **NOT YET** | After local flow verified end-to-end |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
+
+### Product map state
+
+- **59 items** in Mealie "Next Order" (from plan id=4: Greek Salmon, Lemon Pasta, Bailey's Chili, Jambalaya)
+- **29 items** marked as pantry-skip (`__skip__` sentinel) — dropped silently by `resolve_cart_item`
+- **30 items** are real grocery mappings — these are what cart.py will search for on Food Lion
+- `seed_product_map.rb --list` to inspect all entries
 
 ### Config decisions (important for debugging)
 
@@ -147,9 +154,8 @@ safety:
 
 Pickup is **Thursday**, not Sunday. Perishability-aware scheduling means seafood/fish recipes should land Sun or Mon (1–2 days post-pickup). If you see scheduling warnings about perishable items landing late in the week, that's why.
 
-### Pending plan
+### Approved plan (id=4)
 
-Plan id=4 is saved and sent to Telegram. Assignments:
 - Thu Jul 2: Greek Salmon (2 srv) — perishable seafood, placed first
 - Fri Jul 3: Lemon Pasta with Salmon (2 srv) — second seafood before shelf-stable proteins
 - Sun Jul 5: Bailey's Chili (4 srv) — makes leftovers (covers Mon Jul 6)
@@ -290,13 +296,49 @@ File: `scripts/seed_product_map.rb`
 
 ---
 
+## Bugs fixed — 2026-06-28 fifth session
+
+**Pantry staples: `"On Hand"` toggle in Mealie does not work for free-text ingredients**
+The `onHand` check in `shopping.rb` only fires when an ingredient is linked to a Mealie food
+object (`food && food['onHand']`). Bailey's imported recipes use free-text notes with no food
+linkage, so `food` is always nil and the check never runs. The 200 foods in Mealie's food DB
+are a generic demo set (juices, supplements) — none match the actual recipe ingredients.
+Fix: added pantry-skip support to `seed_product_map.rb` and `main.rb`:
+- Pressing `s` at the search term prompt saves `search_term = '__skip__'`
+- `resolve_cart_item` returns `nil` for `__skip__` entries
+- `cmd_build_cart` uses `filter_map` to drop nils — skipped items never reach cart.py
+- `--list` output shows "(pantry staple — excluded from cart)" for skipped entries
+Files: `scripts/seed_product_map.rb`, `main.rb`
+
+**HTTParty `timeout:` only sets `open_timeout`, not `read_timeout`**
+A single Mealie POST mid-way through pushing 54 items stalled indefinitely despite
+`timeout: 30`. HTTParty's `timeout:` option reliably sets `open_timeout` but not always
+`read_timeout` in all Net::HTTP versions.
+Fix: replaced `timeout: 30` with `open_timeout: 10, read_timeout: 30` on all four HTTP
+verbs (get, post, patch, delete) in `mealie_client.rb`.
+File: `lib/autochef/mealie_client.rb`
+
+**`CART_BUILDER_PYTHON` constant evaluated before `Dotenv.load` runs**
+`CartClient::PYTHON_BIN` was a class-level constant set at require time (line 35 of `main.rb`).
+`Config.load` (which calls `Dotenv.load`) isn't called until later inside `main`. Result:
+`ENV['CART_BUILDER_PYTHON']` was always nil → fallback to system `python3` → no playwright.
+Fix: removed the constant; read `ENV.fetch('CART_BUILDER_PYTHON', 'python3')` inside
+`build_cart` at call time, after Dotenv has already loaded.
+File: `lib/autochef/cart_client.rb`
+
+**Bailey's Chili compound toppings ingredient**
+Recipe had a single ingredient line: "Shredded cheese, diced avocado, sliced jalapeños,
+sour cream, hot sauce, cilantro (for topping)". This appeared as one unmappable line in the
+shopping list and seed script.
+Fix: PATCHed the recipe via Mealie API to split into 6 individual ingredient lines.
+After `main.rb shop` was re-run: 59 items total (was 54 — net +5 from the split).
+
+---
+
 ## Known issues (not yet fixed)
 
 **`est_total` never populated (deviation warning can't fire)**
 `cart.py`'s `make_output(...)` call never passes `est_total`. `safety.deviation_warning` receives `nil` and returns immediately. No impact on correctness, but the budget deviation feature is silently disabled.
-
-**`resolve_cart_item` key mismatch (latent bug)**
-`main.rb`'s `resolve_cart_item` looks up `ProductMap` by `item['note']` (Mealie `display_name`), but the product map is keyed by `food_name`. When they differ, lookup silently falls back to raw item name → "unmapped" warning for items that *are* in the map. Will surface once `seed_product_map.rb` is populated.
 
 **No Telegram alert on total plan failure**
 If `main.rb plan` crashes before sending the Telegram message (e.g. Mealie unreachable),
@@ -381,12 +423,15 @@ bundle exec ruby scripts/seed_product_map.rb
 
 ## What's coming next (in order)
 
-1. **`bundle exec ruby scripts/seed_product_map.rb`** — Bailey runs this interactively in their own terminal. 54 items to map from the current "Next Order" list. Tips:
-   - Pure pantry items (water, salt, black pepper, olive oil) → mark "On Hand" in Mealie so they never appear, or just press Enter to accept the default search term and skip during cart build
-   - For real groceries, enter a clean Food Lion search term (e.g. "salmon fillet" for "1 lb raw salmon fillet")
-   - Use `--update` to re-map any that need fixing after the first pass
-2. **`bundle exec ruby main.rb build-cart`** — first live Playwright cart build against Food Lion To Go. `dry_run: true` is on — it builds the cart and stops, does not place the order.
-3. **Docker deployment** on Unraid — after local flow is verified end-to-end
+1. **`bundle exec ruby main.rb build-cart`** — first live Playwright cart build. The CART_BUILDER_PYTHON fix was just applied this session. What to expect:
+   - Chrome opens headlessly and searches Food Lion for each of the 30 mapped items
+   - `dry_run: true` — builds the cart and stops, never places the order
+   - Takes a few minutes (30 items × search + add)
+   - Flagged items (not found, out of stock) appear in the Telegram cart-ready message
+   - If Food Lion bot detection fires again, see `SELECTOR MAINTENANCE` in `cart_builder/cart.py`
+   - If the session has expired: `source .venv/bin/activate && python3 cart_builder/cart.py --login`
+2. **Post-build review** — check the cart at the Food Lion To Go link in the Telegram message. Note any items that searched to the wrong product and fix their search terms with `seed_product_map.rb --update`.
+3. **Docker deployment** on Unraid — after the local cart build is verified
 4. **Uptime Kuma push monitor** — Bailey creates a Push monitor in Kuma at 192.168.1.64:3001; paste the push URL into `.env` as `UPTIME_KUMA_PUSH_URL`
 5. **MCP setup** — Docker MCP server so Claude Code can manage containers directly
 

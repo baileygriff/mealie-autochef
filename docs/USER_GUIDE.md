@@ -135,7 +135,7 @@ Interactive — walks every item in the current Mealie "Next Order" shopping lis
 
 **First run:** expect ~50 items spanning all your initial recipes. Most are one-and-done — once "salmon fillet" is mapped, it stays mapped forever.
 
-**Pantry staples** (water, salt, black pepper, olive oil): mark them "On Hand" in Mealie (see step 7) so they never appear in the list. Any that slip through can be mapped to a dummy search term — the cart builder will just find nothing and skip them.
+**Pantry staples** (water, salt, black pepper, olive oil): type `s` at the search term prompt to mark an item as a pantry staple. It will be excluded from the cart payload entirely — cart.py never sees it. Note: Mealie's "On Hand" food toggle only works when ingredients are linked to Mealie food objects; imported free-text recipes bypass it, so `s` in the seed script is the reliable path.
 
 **Steady state:** most weeks need no seeding at all. New seeding is only needed when a brand-new recipe with previously-unseen ingredients enters your planning pool. `main.rb shop` will flag the unmapped items by name at the end of its output.
 
