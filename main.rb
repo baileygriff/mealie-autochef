@@ -34,6 +34,7 @@ require_relative 'lib/autochef/shopping'
 require_relative 'lib/autochef/safety'
 require_relative 'lib/autochef/cart_client'
 require_relative 'lib/autochef/llm_qty_consolidator'
+require_relative 'lib/autochef/llm_recipe_mapper'
 require_relative 'lib/autochef/notify'
 require_relative 'lib/autochef/reminders'
 require_relative 'lib/autochef/feedback'
@@ -526,8 +527,10 @@ def cmd_shop
   puts "  #{result.pushed_count} total item(s) pushed"
 
   if result.unmapped_items.any?
-    puts "\n⚠  #{result.unmapped_items.size} unmapped ingredient(s) — run seed_product_map.rb to map them:"
+    puts "\n⚠  #{result.unmapped_items.size} unmapped ingredient(s) — run automap to map them:"
     result.unmapped_items.each { |name| puts "     • #{name}" }
+    puts "  Auto:   bundle exec ruby main.rb automap"
+    puts "  Manual: bundle exec ruby scripts/seed_product_map.rb"
   end
 
   if result.warnings.any?
@@ -537,6 +540,89 @@ def cmd_shop
 
   ping_uptime_kuma(ENV.fetch('UPTIME_KUMA_PUSH_URL', ''))
   result.unmapped_items.empty? ? 0 : 1
+end
+
+def cmd_automap
+  puts '=== Mealie AutoChef — automap (LLM-assisted recipe mapping) ==='
+
+  begin
+    cfg = Autochef::Config.load
+  rescue StandardError => e
+    puts "Config load FAILED: #{e.message}"
+    return 1
+  end
+
+  begin
+    Autochef::Database.connect!
+    Autochef::Database.migrate!
+  rescue StandardError => e
+    puts "DB init/migrate FAILED: #{e.message}"
+    return 1
+  end
+
+  unless cfg.llm.enabled
+    puts 'LLM not enabled — set llm.enabled: true in config.yaml'
+    return 1
+  end
+
+  client = build_client(cfg)
+  begin
+    client.ping
+  rescue StandardError => e
+    puts "Cannot reach Mealie: #{e.message}"
+    return 1
+  end
+
+  history = Autochef::Models::PlanHistory.where(approved: 1).order(created_at: :desc).first
+  if history.nil?
+    puts 'No approved plan found. Run `main.rb plan` and approve it first.'
+    return 1
+  end
+  puts "Using approved plan id=#{history.id} (week of #{history.week_start})."
+
+  mapper = Autochef::LlmRecipeMapper.new(cfg)
+  puts "\nRunning LLM-assisted recipe mapping..."
+  result = mapper.map_unmapped(mealie_client: client, plan_history: history)
+
+  if result.errors.any?
+    puts "\nErrors:"
+    result.errors.each { |e| puts "  ✗ #{e}" }
+  end
+
+  if result.new_mapped.any?
+    puts "\nMapped #{result.new_mapped.size} new ingredient(s):"
+    result.new_mapped.each do |m|
+      unit_str = m[:unit] ? " (#{m[:qty]} #{m[:unit]})" : " (qty: #{m[:qty]})"
+      puts "  ✓ #{m[:key]} → #{m[:search_term]}#{unit_str}"
+    end
+  end
+
+  if result.pantry_skipped.any?
+    puts "\nMarked #{result.pantry_skipped.size} pantry staple(s) as skip:"
+    result.pantry_skipped.each { |k| puts "  ✓ #{k} → __skip__" }
+  end
+
+  if result.suspicious.any?
+    puts "\n#{result.suspicious.size} suspicious existing mapping(s) — review manually:"
+    result.suspicious.each { |s| puts "  ⚠  #{s['ingredient_name']}: #{s['concern']}" }
+    puts "  Run: bundle exec ruby scripts/seed_product_map.rb --update"
+  end
+
+  if result.new_mapped.empty? && result.pantry_skipped.empty? &&
+     result.suspicious.empty? && result.errors.empty?
+    puts "\nAll ingredients already mapped — nothing to do."
+  end
+
+  if cfg.notify.channel == 'telegram' && !cfg.notify.telegram_bot_token.to_s.empty?
+    begin
+      Autochef::Notifier.new(cfg, mealie_client: client).send_automap_report(result)
+      puts "\nTelegram report sent."
+    rescue StandardError => e
+      puts "Telegram report failed: #{e.message}"
+    end
+  end
+
+  result.errors.empty? ? 0 : 1
 end
 
 def cmd_build_cart(force: false)
@@ -965,6 +1051,8 @@ def main
     cmd_plan(freeform_note: ARGV[1])
   when 'shop'
     cmd_shop
+  when 'automap'
+    cmd_automap
   when 'build-cart'
     cmd_build_cart(force: ARGV.include?('--force'))
   when 'feedback'
@@ -974,7 +1062,7 @@ def main
   when 'backup'
     cmd_backup
   when nil
-    puts 'Usage: ruby main.rb <check|sync|serve|plan|shop|build-cart [--force]|feedback [--force]|budget|backup>'
+    puts 'Usage: ruby main.rb <check|sync|serve|plan|shop|automap|build-cart [--force]|feedback [--force]|budget|backup>'
     1
   else
     puts "Unknown command: #{command}"

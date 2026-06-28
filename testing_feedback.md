@@ -80,6 +80,26 @@ Run `bundle exec ruby scripts/seed_product_map.rb --list` to inspect all entries
 
 ---
 
+## Implemented — 2026-06-28 (eleventh session)
+
+**Feature 6 — LLM Assisted Recipe Mapping**
+Replaces the manual `seed_product_map.rb` interactive flow for new ingredients. `LlmRecipeMapper` fetches unmapped autochef-managed items from the Mealie "Next Order" shopping list, sends them to Claude Haiku in a single batch call, and auto-saves `{search_term, qty, unit}` suggestions to `product_map`. Pantry staples (salt, pepper, oil, spices, soy sauce, vinegar, etc.) are auto-set to `__skip__`. A second pass sends existing mappings to Haiku and flags any that look suspicious (bad search term, wrong qty, wrong pantry-skip status) — flags are printed/reported only, never auto-overwritten. Falls back gracefully on any LLM error and surfaces errors in the Telegram report.
+Files: `lib/autochef/llm_recipe_mapper.rb` (new), `scripts/auto_map.rb` (new), `main.rb` (`cmd_automap`, `automap` in dispatcher), `lib/autochef/notify.rb` (`send_automap_report`, `/automap` bot command, updated unmapped hint in `build_shopping_list_for`)
+
+**`main.rb automap` — new CLI command**
+Loads config + DB, runs `LlmRecipeMapper#map_unmapped`, prints stdout summary, sends Telegram report via `send_automap_report`. Wired into the `main()` dispatcher alongside the existing commands.
+File: `main.rb`
+
+**`/automap` Telegram bot command**
+Checks `cfg.llm.enabled`, replies "Auto-map started — I'll message you when done.", then spawns `main.rb automap` in a background thread (same pattern as `/shop`). Added to `/help` text.
+File: `lib/autochef/notify.rb`
+
+**Unmapped-items hint updated**
+`cmd_shop` (stdout) and `build_shopping_list_for` (Telegram approval message) now point to `main.rb automap` as the fast path, with `seed_product_map.rb` as the manual fallback.
+Files: `main.rb`, `lib/autochef/notify.rb`
+
+---
+
 ## Implemented — 2026-06-28 (tenth session)
 
 **End-to-end test run (partial — stopped before build-cart)**

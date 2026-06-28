@@ -49,7 +49,12 @@ The final summary screenshot (`run_key.png`) stays as-is for the Telegram notifi
 
 ---
 
-### 6. LLM Assisted Recipe Mapping
+### ✅ 6. LLM Assisted Recipe Mapping — completed 2026-06-28 (eleventh session)
+
+`lib/autochef/llm_recipe_mapper.rb`, `scripts/auto_map.rb`, `main.rb automap`, `/automap` bot command.
+See [testing_feedback.md](testing_feedback.md) § eleventh session for full details.
+
+Original spec preserved below for reference.
 
 Replaces the manual `seed_product_map.rb` interactive flow. Claude Haiku suggests `search_term`, `qty`, `unit` for new ingredients, auto-saves them, and generates a Telegram review report. Also flags suspicious existing mappings.
 

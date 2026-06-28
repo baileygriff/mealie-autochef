@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (tenth session)
+## Current state as of 2026-06-28 (eleventh session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -110,7 +110,7 @@ mealie-autochef-ruby/
 | `main.rb serve` | ✓ | Bot + Sinatra form both start cleanly |
 | Telegram approval + swap | ✓ | Swap flow + approval both confirmed with plan id=5 |
 | `main.rb shop` | ✓ | 35 items pushed to Mealie "Next Order" (plan id=5 recipes) |
-| `seed_product_map.rb` | ✓ | Covered by plan id=4; plan id=5 unmapped (skipped — Feature 6 will replace) |
+| `seed_product_map.rb` | ✓ | Covered by plan id=4; plan id=5 unmapped (Feature 6 now handles this) |
 | `main.rb build-cart` | ✓ | 24/24 items added (consolidated), $119.45 total, 0 flagged (plan id=4) |
 | Week configurator (Sinatra form) | ✓ | Starts clean; Telegram link TODO until Docker deploy on Unraid |
 | Enhancement 2 — LLM qty consolidation | ✓ | `lib/autochef/llm_qty_consolidator.rb`; runs after Enhancement 1 pass |
@@ -119,6 +119,7 @@ mealie-autochef-ruby/
 | Crash alert on plan failure | ✓ | `Notifier.send_crash_alert`; top-level rescue in `cmd_plan` |
 | `/wrapup` session skill | ✓ | `.claude/commands/wrapup.md` — updates all docs + commits/pushes |
 | `testing_verifications.md` | ✓ | Per-feature verification tracker; linked from README + TESTING_HANDOFF |
+| Feature 6 — LLM Assisted Recipe Mapping | ✓ | `lib/autochef/llm_recipe_mapper.rb`, `scripts/auto_map.rb`, `main.rb automap`, `/automap` bot command |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
@@ -235,9 +236,9 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
 
-### New features (feedback items 1–4 cleared in ninth session; no new features in tenth)
+### New features (feedback items 1–4 cleared in ninth session; Feature 6 cleared in eleventh)
 5. Debug screenshots
-6. LLM Assisted Recipe Mapping (auto_map.rb — replaces manual seed script; auto-runs after /newrecipes)
+6. ✅ LLM Assisted Recipe Mapping — `main.rb automap`, `lib/autochef/llm_recipe_mapper.rb`, `/automap` bot command (eleventh session)
 7. LLM Cart Review (auto after build-cart, screenshot+vision, auto-apply corrections)
 8. LLM Aided Shopping (toggleable via Telegram, PreferenceNote model, skip+note on bad match)
 9. Recipe Sleep feature

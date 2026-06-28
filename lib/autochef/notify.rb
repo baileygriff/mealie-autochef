@@ -177,6 +177,42 @@ module Autochef
       warn "send_morning_ping error: #{e.message}"
     end
 
+    # Send a Telegram report after an LLM auto-map run (Feature 6).
+    # result is an LlmRecipeMapper::Result struct.
+    def send_automap_report(result)
+      lines = []
+
+      if result.new_mapped.any? || result.pantry_skipped.any?
+        total = result.new_mapped.size + result.pantry_skipped.size
+        skip_note = result.pantry_skipped.any? ? " (#{result.pantry_skipped.size} pantry-skip)" : ''
+        lines << "*Auto-map complete* — #{total} new ingredient(s) mapped#{skip_note}."
+        result.new_mapped.each { |m| lines << "  • #{m[:key]} → #{m[:search_term]}" }
+        result.pantry_skipped.each { |k| lines << "  • #{k} → pantry skip" }
+      else
+        lines << "*Auto-map*: no new unmapped ingredients found."
+      end
+
+      if result.suspicious.any?
+        lines << ''
+        lines << "#{result.suspicious.size} suspicious existing mapping(s) — review with seed_product_map.rb --list:"
+        result.suspicious.each { |s| lines << "  • #{s['ingredient_name']}: #{s['concern']}" }
+      end
+
+      if result.errors.any?
+        lines << ''
+        lines << "#{result.errors.size} error(s):"
+        result.errors.each { |e| lines << "  • #{e.slice(0, 200)}" }
+      end
+
+      bot_api.send_message(
+        chat_id:    @chat_id,
+        text:       lines.join("\n"),
+        parse_mode: 'Markdown'
+      )
+    rescue StandardError => e
+      warn "send_automap_report error: #{e.message}"
+    end
+
     private
 
     # -------------------------------------------------------------------------
@@ -222,6 +258,7 @@ module Autochef
       when '/staples'  then cmd_staples(bot, msg, args)
       when '/servings' then cmd_servings(bot, msg, args)
       when '/shop'     then cmd_shop(bot, msg)
+      when '/automap'  then cmd_automap(bot, msg)
       when '/help'     then cmd_help(bot, msg)
       end
     end
@@ -630,6 +667,21 @@ module Autochef
       end
     end
 
+    def cmd_automap(bot, msg)
+      unless @cfg.llm.enabled
+        reply(bot, msg.chat.id, "Auto-map requires LLM. Set llm.enabled: true in config.yaml.")
+        return
+      end
+      reply(bot, msg.chat.id, "Auto-map started — I'll message you when done.")
+      project_root = File.expand_path('../..', __dir__)
+      Thread.new do
+        system('bundle', 'exec', 'ruby', "#{project_root}/main.rb", 'automap',
+               chdir: project_root)
+      rescue StandardError => e
+        warn "cmd_automap background thread error: #{e.message}"
+      end
+    end
+
     def cmd_help(bot, msg)
       text = <<~HELP
         *Mealie AutoChef — Bot Commands*
@@ -639,6 +691,7 @@ module Autochef
         */remove* <id> — remove a manual addition
         */servings* <day> <n> — change servings for a meal (e.g. `/servings Mon 4`)
         */shop* — rebuild the Food Lion cart (runs build-cart --force)
+        */automap* — LLM-map unmapped ingredients in the shopping list
         */staples list* — show recurring staples
         */staples add* <name> <cadence> — add a staple (cadence: `every_order`, `every_2_orders`, `every_14_days`)
         */staples remove* <id> — deactivate a staple
@@ -942,7 +995,7 @@ module Autochef
         lines << ''
         lines << "⚠️ *#{result.unmapped_items.size} unmapped ingredient(s) — no Food Lion product set:*"
         result.unmapped_items.each { |name| lines << "  • #{name}" }
-        lines << "_Run `scripts/seed_product_map.rb` to map them before building the cart._"
+        lines << "_Run `/automap` to auto-map them, or `scripts/seed_product_map.rb` to map manually._"
       end
 
       if result.warnings.any?

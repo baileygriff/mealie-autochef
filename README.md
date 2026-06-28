@@ -123,6 +123,7 @@ All commands follow the pattern `bundle exec ruby main.rb <command>`.
 | `plan [note]` | 2+3 | Score recipes, build week plan, send Telegram draft for approval |
 | `serve` | 3+6 | Long-running Telegram bot + Sinatra week configurator (port 3456) + rufus-scheduler |
 | `shop` | 4 | Scale ingredients, inject staples, push "Next Order" list to Mealie |
+| `automap` | 4 | LLM-map unmapped ingredients in "Next Order" to Food Lion search terms |
 | `build-cart [--force]` | 5 | Fetch Next Order list → drive Food Lion cart via Playwright |
 | `feedback [--force]` | 6 | Increment times_cooked, update tag_weights from kept plan |
 | `budget` | 6 | Print monthly/YTD spend from order_history |
@@ -238,20 +239,28 @@ export CART_BUILDER_PYTHON="$(pwd)/.venv/bin/python3"
 
 ### 9. Seed the product map
 
+After the first `main.rb shop`, map unmapped ingredients to Food Lion search terms.
+
+**LLM-assisted (recommended):**
+```bash
+bundle exec ruby main.rb automap
+```
+Claude Haiku suggests search terms, quantities, and pantry-skip flags for all
+unmapped ingredients in one batch. Auto-saves everything. Also `/automap` in
+Telegram.
+
+**Manual fallback:**
 ```bash
 bundle exec ruby scripts/seed_product_map.rb
 ```
-
-Interactive — fetches every autochef-managed item from the Mealie "Next Order"
-list and walks you through mapping each one to a Food Lion search term, pack
-size, and default quantity. Run this after the first `main.rb shop`.
+Interactive — walks each unmapped item and prompts for search term, pack size,
+default quantity, and rounding rule.
 
 **First run:** expect ~50 items (all ingredients from your initial recipe pool).
-**Steady state:** only new ingredients from newly-added recipes need mapping —
-most weeks require no seeding at all. `main.rb shop` reports unmapped items
-by name at the end of its output.
+**Steady state:** only new ingredients from newly-added recipes need mapping.
+`main.rb shop` reports unmapped items and lists both paths.
 
-Flags: `--list` (show existing mappings), `--update` (re-map already-mapped items).
+Manual flags: `--list` (show existing mappings), `--update` (re-map already-mapped items).
 
 ---
 
@@ -286,6 +295,8 @@ mealie-autochef/
 │   ├── scoring.rb                # deterministic preference scorer
 │   ├── planner.rb                # cook-day scheduling + perishability ordering
 │   ├── llm_planner.rb            # Claude Haiku weekly draft, strict JSON output
+│   ├── llm_qty_consolidator.rb   # LLM pack-size rationalization after deduplication
+│   ├── llm_recipe_mapper.rb      # LLM-assisted product map seeder (automap)
 │   ├── shopping.rb               # list gen, scaling, staples, product map
 │   ├── recurring.rb              # cadence-based staple injection
 │   ├── notify.rb                 # Telegram bot + approval flow
@@ -322,7 +333,8 @@ mealie-autochef/
 │
 ├── scripts/
 │   ├── tag_recipes.rb            # interactive recipe/food tagger
-│   └── seed_product_map.rb       # interactive product-map seeder
+│   ├── seed_product_map.rb       # interactive product-map seeder (manual fallback)
+│   └── auto_map.rb               # LLM-assisted product-map seeder (Feature 6)
 │
 ├── spec/
 │   ├── spec_helper.rb            # in-memory SQLite, transaction rollback isolation
