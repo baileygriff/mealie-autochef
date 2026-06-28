@@ -13,6 +13,8 @@ Items 1–4 completed in the ninth session (2026-06-28). See [testing_feedback.m
 - ✅ Telegram UX: Food Lion Markdown link, `/shop` command, screenshot as photo
 - ✅ `est_total` populated in `cart.py` output
 - ✅ Crash alert on plan failure (`Notifier.send_crash_alert`, method-level rescue in `cmd_plan`)
+- ✅ `/add` multi-item LLM flow — `LlmItemParser`, preview/confirm/edit/cancel, cart rebuild (twelfth session)
+- ✅ Automap Telegram report reformatted — two sections: Grocery additions (bullet, qty/unit) + Pantry skips (compact comma list) (twelfth session)
 
 ---
 
@@ -49,10 +51,12 @@ The final summary screenshot (`run_key.png`) stays as-is for the Telegram notifi
 
 ---
 
-### ✅ 6. LLM Assisted Recipe Mapping — completed 2026-06-28 (eleventh session)
+### ✅ 6. LLM Assisted Recipe Mapping — completed 2026-06-28 (eleventh session); verified + bug-fixed twelfth session
 
 `lib/autochef/llm_recipe_mapper.rb`, `scripts/auto_map.rb`, `main.rb automap`, `/automap` bot command.
-See [testing_feedback.md](testing_feedback.md) § eleventh session for full details.
+See [testing_feedback.md](testing_feedback.md) § twelfth and eleventh sessions for full details.
+
+Key bug fixed in twelfth session: product_map keys now use the original Mealie note (via numbered items + index echo) rather than the LLM's stripped `ingredient_name`. This ensures `resolve_cart_item` can look them up correctly.
 
 Original spec preserved below for reference.
 

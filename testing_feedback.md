@@ -80,6 +80,26 @@ Run `bundle exec ruby scripts/seed_product_map.rb --list` to inspect all entries
 
 ---
 
+## Implemented / Fixed — 2026-06-28 (twelfth session)
+
+**Bug: `LlmRecipeMapper` saved keys with trailing ` 0.0` suffix**
+Items sent to the LLM included the Mealie `quantity` float field (always `0.0` for free-text ingredients) appended to the note text. The LLM echoed this back in `ingredient_name`, so keys were saved as e.g. `"1 ½ pounds skinned fresh halibut 0.0"`. Fixed by removing qty/unit appending from `items_lines`.
+File: `lib/autochef/llm_recipe_mapper.rb`
+
+**Bug: `LlmRecipeMapper` key mismatch — LLM stripped quantity prefixes**
+Even after fixing the suffix, the LLM stripped quantity prefixes from ingredient names (returned `"skinned fresh halibut"` not `"1 ½ pounds skinned fresh halibut"`), so keys didn't match what `resolve_cart_item` looks up (the full Mealie note). Fixed by numbering input lines (`1. {note}`, `2. {note}`, ...), instructing the LLM to return `"index": N` for each item, and using `unmapped[index - 1]['note']` as the key instead of the LLM's `ingredient_name`. Result: 35/35 plan id=5 items correctly mapped.
+File: `lib/autochef/llm_recipe_mapper.rb`
+
+**Feature: `/add` multi-item LLM flow**
+Rewrote `/add` to accept freeform natural language with any number of items. When LLM is enabled, `cmd_add` routes to `cmd_add_llm` which calls `LlmItemParser` (new file), fuzzy-matches each parsed item against existing product_map entries, and sends a preview message with [✅ Add to cart] [✏️ Edit] [❌ Cancel] inline buttons. Confirming saves ManualAddition records, pushes all items to Mealie "Next Order", and spawns `build-cart --force` in a background thread (same as `/shop`). Edit sets state `:waiting_add_correction` and re-parses free text. Cancel clears state. LLM disabled falls back to the old single-item parse flow.
+Files: `lib/autochef/llm_item_parser.rb` (new), `lib/autochef/notify.rb`
+
+**Feedback: Automap Telegram report reformatted**
+`send_automap_report` now sends two clearly labelled sections. Grocery additions: bullet list with `• search_term — qty unit`. Pantry skips: single compact comma-separated line with measurement prefixes stripped (regex strips leading `3 tablespoons`, `1 cup`, etc.). Suspicious flags moved to their own ⚠️ labelled block with a review hint.
+File: `lib/autochef/notify.rb`
+
+---
+
 ## Implemented — 2026-06-28 (eleventh session)
 
 **Feature 6 — LLM Assisted Recipe Mapping**

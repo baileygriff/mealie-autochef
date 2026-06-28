@@ -70,7 +70,11 @@ module Autochef
         begin
           suggestions = call_mapping_llm(unmapped, plan_recipes)
           suggestions.each do |s|
-            key = normalize(s['ingredient_name'])
+            # Use the index the LLM echoed back to retrieve the original note as the key.
+            # This ensures the key always matches what resolve_cart_item looks up.
+            idx = s['index'].to_i - 1
+            original_item = unmapped[idx]
+            key = original_item ? normalize(original_item['note']) : normalize(s['ingredient_name'])
             next if key.empty?
 
             record = Models::ProductMap.find_or_initialize_by(key: key)
@@ -134,12 +138,9 @@ module Autochef
     def call_mapping_llm(items, plan_recipes)
       recipe_ctx = plan_recipes.any? ? "Recipes this week: #{plan_recipes.join(', ')}." : ''
 
-      items_lines = items.map do |item|
-        note     = item['note'].to_s.strip
-        qty_str  = item['quantity'].to_s.strip
-        unit_str = (item.dig('unit', 'name') || item['unit'].to_s).to_s.strip
-        parts    = [note, qty_str.empty? ? nil : qty_str, unit_str.empty? ? nil : unit_str].compact
-        "- #{parts.join(' ')}"
+      items_lines = items.each_with_index.map do |item, i|
+        note = item['note'].to_s.strip
+        "#{i + 1}. #{note}"
       end.join("\n")
 
       user_msg = <<~USER
@@ -159,18 +160,17 @@ module Autochef
         vinegar (any type), sugar, brown sugar, flour, cornstarch, baking soda, baking powder,
         vanilla extract, dried herbs (any), chicken bouillon, beef bouillon, cooking spray.
 
-        Unmapped ingredients:
+        Unmapped ingredients (numbered):
         #{items_lines}
 
         Rules:
         - For real grocery items use a simple, clear search term (e.g. "chicken breast" not "boneless skinless chicken breast fillets")
         - qty should be 1 for most items; only increase when the recipe clearly needs multiple units
         - Use "lb" for proteins sold by weight, "ea" or "ct" for single items, "bag" or "bunch" for produce
+        - You MUST include every numbered item in your response, in the same order
 
-        Return ONLY a JSON array, no prose, no markdown fences:
-        [{"ingredient_name": "...", "search_term": "...", "qty": N, "unit": "..." or null, "pantry_skip": true or false}]
-
-        Include ALL ingredients from the input list above.
+        Return ONLY a JSON array, no prose, no markdown fences. Include the item number as "index":
+        [{"index": 1, "search_term": "...", "qty": N, "unit": "..." or null, "pantry_skip": true or false}]
       USER
 
       raw = call_claude(user_msg)

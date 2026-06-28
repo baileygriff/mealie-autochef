@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (eleventh session)
+## Current state as of 2026-06-28 (twelfth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -119,7 +119,9 @@ mealie-autochef-ruby/
 | Crash alert on plan failure | ✓ | `Notifier.send_crash_alert`; top-level rescue in `cmd_plan` |
 | `/wrapup` session skill | ✓ | `.claude/commands/wrapup.md` — updates all docs + commits/pushes |
 | `testing_verifications.md` | ✓ | Per-feature verification tracker; linked from README + TESTING_HANDOFF |
-| Feature 6 — LLM Assisted Recipe Mapping | ✓ | `lib/autochef/llm_recipe_mapper.rb`, `scripts/auto_map.rb`, `main.rb automap`, `/automap` bot command |
+| Feature 6 — LLM Assisted Recipe Mapping | ✓ | Verified end-to-end: 35/35 plan id=5 items mapped correctly; bug fixed (key suffix + key mismatch) |
+| `/add` multi-item LLM flow | ✓ | `LlmItemParser`, preview + confirm/edit/cancel buttons, triggers cart rebuild on confirm |
+| Automap Telegram report reformatted | ✓ | Sectioned: Grocery additions (bullet, qty/unit) + Pantry skips (compact comma list) |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
@@ -216,6 +218,10 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **`last_planned` is set on approval, not on draft save** — this was a bug fixed 2026-06-28. Don't move it back. Drafts only update `times_planned`.
 
+**`LlmRecipeMapper` uses numbered items + index echo** — items sent as `1. {note}`, `2. {note}`, ...  and the LLM must return `"index": N` in each response. The save loop uses `unmapped[index - 1]['note']` as the product_map key, NOT `s['ingredient_name']`. This ensures keys match what `resolve_cart_item` looks up (the full Mealie note). Do not revert to using `s['ingredient_name']` as the key — it strips quantity prefixes and breaks the lookup.
+
+**`/add` flow with LLM enabled** — `cmd_add` routes to `cmd_add_llm` which shows a preview with [✅ Add to cart] [✏️ Edit] [❌ Cancel] buttons before touching Mealie. Pending state `{ action: :waiting_add_confirmation, items: [...] }` is stored in `@pending_states[chat_id]`. Confirmation triggers `execute_add_items` which saves ManualAddition records, pushes to Mealie, and spawns `build-cart --force` in a background thread.
+
 ---
 
 ## What to do when Bailey sends a screenshot
@@ -236,13 +242,17 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
 
-### New features (feedback items 1–4 cleared in ninth session; Feature 6 cleared in eleventh)
+### New features (feedback items 1–4 cleared in ninth session; Feature 6 verified in twelfth)
 5. Debug screenshots
-6. ✅ LLM Assisted Recipe Mapping — `main.rb automap`, `lib/autochef/llm_recipe_mapper.rb`, `/automap` bot command (eleventh session)
+6. ✅ LLM Assisted Recipe Mapping — verified twelfth session; bug fixed (product_map key mismatch)
 7. LLM Cart Review (auto after build-cart, screenshot+vision, auto-apply corrections)
 8. LLM Aided Shopping (toggleable via Telegram, PreferenceNote model, skip+note on bad match)
 9. Recipe Sleep feature
 10. LLM Recipe Suggestions (`/newrecipes`)
+
+### Added this session
+- ✅ `/add` multi-item LLM flow — `LlmItemParser`, preview/confirm/edit/cancel, cart rebuild on confirm (`lib/autochef/llm_item_parser.rb`, `lib/autochef/notify.rb`)
+- ✅ Automap Telegram report reformatted — Grocery additions section (search_term + qty/unit) + Pantry skips (compact comma list)
 
 ### Infrastructure (after stable local operation)
 11. Docker deployment on Unraid

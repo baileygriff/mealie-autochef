@@ -8,6 +8,7 @@ require_relative 'models/manual_addition'
 require_relative 'models/recurring_item'
 require_relative 'shopping'
 require_relative 'sinatra_prefs_source'
+require_relative 'llm_item_parser'
 
 module Autochef
   # Telegram notification + approval bot for Mealie AutoChef.
@@ -184,18 +185,37 @@ module Autochef
 
       if result.new_mapped.any? || result.pantry_skipped.any?
         total = result.new_mapped.size + result.pantry_skipped.size
-        skip_note = result.pantry_skipped.any? ? " (#{result.pantry_skipped.size} pantry-skip)" : ''
-        lines << "*Auto-map complete* — #{total} new ingredient(s) mapped#{skip_note}."
-        result.new_mapped.each { |m| lines << "  • #{m[:key]} → #{m[:search_term]}" }
-        result.pantry_skipped.each { |k| lines << "  • #{k} → pantry skip" }
+        lines << "*Auto-map complete — #{total} new ingredient(s)*"
+
+        if result.new_mapped.any?
+          lines << ''
+          lines << "*Grocery additions (#{result.new_mapped.size}):*"
+          result.new_mapped.each do |m|
+            unit_str = m[:unit] ? " #{m[:unit]}" : ''
+            lines << "  • #{m[:search_term]} — #{m[:qty]}#{unit_str}"
+          end
+        end
+
+        if result.pantry_skipped.any?
+          lines << ''
+          lines << "*Pantry skips (#{result.pantry_skipped.size}):*"
+          # One compact line: comma-separated bare ingredient names (measurement prefix stripped)
+          bare_names = result.pantry_skipped.map do |k|
+            k.sub(/\A[\d\s\/\.\-]+(tablespoons?|teaspoons?|cups?|tsp|tbsp|oz|lb|lbs|quarts?|pounds?|ounces?|cloves?|bunches?|pinch(?:es)?|small|large|medium)?\s+/i, '')
+             .split(',').first.to_s.strip
+             .then { |n| n.empty? ? k : n }
+          end
+          lines << "  #{bare_names.join(', ')}"
+        end
       else
         lines << "*Auto-map*: no new unmapped ingredients found."
       end
 
       if result.suspicious.any?
         lines << ''
-        lines << "#{result.suspicious.size} suspicious existing mapping(s) — review with seed_product_map.rb --list:"
+        lines << "⚠️ #{result.suspicious.size} suspicious existing mapping(s):"
         result.suspicious.each { |s| lines << "  • #{s['ingredient_name']}: #{s['concern']}" }
+        lines << "_Review with `seed_product_map.rb --list`_"
       end
 
       if result.errors.any?
@@ -277,6 +297,20 @@ module Autochef
         name = state[:staple_name]
         @pending_states.delete(msg.chat.id)
         finish_staple_add(bot, msg, name, cadence_text)
+      when :waiting_add_correction
+        correction_text = msg.text.to_s.strip
+        @pending_states.delete(msg.chat.id)
+        reply(bot, msg.chat.id, "_Re-parsing your updated list..._", parse_mode: 'Markdown')
+        items = LlmItemParser.new(@cfg).parse(correction_text)
+        if items.empty?
+          reply(bot, msg.chat.id,
+                "Couldn't parse any items. Try: `/add milk, eggs, chicken`",
+                parse_mode: 'Markdown')
+          return
+        end
+        matched = items.map { |item| match_product_map_entry(item) }
+        @pending_states[msg.chat.id] = { action: :waiting_add_confirmation, items: matched }
+        send_add_preview(bot, msg.chat.id, matched)
       end
     end
 
@@ -291,10 +325,13 @@ module Autochef
       param   = parts[2]
 
       case action
-      when 'approve'    then callback_approve(bot, query, plan_id)
-      when 'swap'       then callback_swap(bot, query, plan_id, param)
-      when 'regenerate' then callback_regenerate(bot, query, plan_id)
-      when 'add_note'   then callback_add_note(bot, query, plan_id)
+      when 'approve'      then callback_approve(bot, query, plan_id)
+      when 'swap'         then callback_swap(bot, query, plan_id, param)
+      when 'regenerate'   then callback_regenerate(bot, query, plan_id)
+      when 'add_note'     then callback_add_note(bot, query, plan_id)
+      when 'add_confirm'  then callback_add_confirm(bot, query)
+      when 'add_edit'     then callback_add_edit(bot, query)
+      when 'add_cancel'   then callback_add_cancel(bot, query)
       end
 
       bot.api.answer_callback_query(callback_query_id: query.id)
@@ -547,10 +584,45 @@ module Autochef
 
     def cmd_add(bot, msg, args)
       if args.empty?
-        reply(bot, msg.chat.id, "Usage: /add <quantity> <unit> <item>  or  /add <item>\nExample: `/add 2 lbs chicken thighs`", parse_mode: 'Markdown')
+        reply(bot, msg.chat.id,
+              "Usage: `/add <item(s)>`\n\nExamples:\n" \
+              "  `/add 2 lbs chicken thighs`\n" \
+              "  `/add milk, eggs, cream cheese, apples`\n" \
+              "  `/add a dozen eggs and some butter`",
+              parse_mode: 'Markdown')
         return
       end
 
+      if @cfg.llm.enabled
+        cmd_add_llm(bot, msg, args)
+      else
+        cmd_add_single(bot, msg, args)
+      end
+    end
+
+    # LLM-powered multi-item add flow — parses freeform text, shows preview,
+    # waits for confirm/edit/cancel before touching Mealie or the cart.
+    def cmd_add_llm(bot, msg, args)
+      text = args.join(' ')
+      reply(bot, msg.chat.id, "_Parsing your list..._", parse_mode: 'Markdown')
+
+      items = LlmItemParser.new(@cfg).parse(text)
+
+      if items.empty?
+        reply(bot, msg.chat.id,
+              "Couldn't parse any items from that. Try: `/add milk, eggs, chicken thighs`",
+              parse_mode: 'Markdown')
+        return
+      end
+
+      # Fuzzy-match each parsed item against existing product_map entries.
+      matched = items.map { |item| match_product_map_entry(item) }
+      @pending_states[msg.chat.id] = { action: :waiting_add_confirmation, items: matched }
+      send_add_preview(bot, msg.chat.id, matched)
+    end
+
+    # Legacy single-item add (LLM disabled).
+    def cmd_add_single(bot, msg, args)
       qty, unit, name = parse_add_args(args)
 
       addition = Models::ManualAddition.new(name: name, quantity: qty, unit: unit)
@@ -560,14 +632,183 @@ module Autochef
       end
       addition.save!
 
-      # Also push to Mealie "Next Order" list.
       mealie_result = push_to_next_order(name: name, quantity: qty, unit: unit)
 
       if mealie_result
-        reply(bot, msg.chat.id, "Added *#{name}* (#{qty}#{unit ? " #{unit}" : ''}) to local DB and Mealie Next Order (id: #{addition.id}).", parse_mode: 'Markdown')
+        reply(bot, msg.chat.id,
+              "Added *#{name}* (#{qty}#{unit ? " #{unit}" : ''}) to Next Order (id: #{addition.id}).",
+              parse_mode: 'Markdown')
       else
-        reply(bot, msg.chat.id, "Added *#{name}* to local DB (id: #{addition.id}). Mealie push failed — check logs.", parse_mode: 'Markdown')
+        reply(bot, msg.chat.id,
+              "Added *#{name}* to local DB (id: #{addition.id}). Mealie push failed — check logs.",
+              parse_mode: 'Markdown')
       end
+    end
+
+    # -------------------------------------------------------------------------
+    # /add confirmation callbacks
+    # -------------------------------------------------------------------------
+
+    def callback_add_confirm(bot, query)
+      chat_id = query.message.chat.id
+      state   = @pending_states.delete(chat_id)
+
+      unless state && state[:action] == :waiting_add_confirmation
+        bot.api.answer_callback_query(callback_query_id: query.id, text: 'No pending add — send /add again.')
+        return
+      end
+
+      items = state[:items]
+      bot.api.answer_callback_query(callback_query_id: query.id)
+      execute_add_items(bot, chat_id, items)
+    end
+
+    def callback_add_edit(bot, query)
+      chat_id = query.message.chat.id
+      state   = @pending_states[chat_id]
+
+      unless state && state[:action] == :waiting_add_confirmation
+        bot.api.answer_callback_query(callback_query_id: query.id, text: 'No pending add — send /add again.')
+        return
+      end
+
+      @pending_states[chat_id] = { action: :waiting_add_correction, items: state[:items] }
+      bot.api.answer_callback_query(callback_query_id: query.id)
+      reply(bot, chat_id,
+            "Send me the corrected list as a plain message (e.g. \"3 lbs chicken, cream cheese, oat milk\"):")
+    end
+
+    def callback_add_cancel(bot, query)
+      chat_id = query.message.chat.id
+      @pending_states.delete(chat_id)
+      bot.api.answer_callback_query(callback_query_id: query.id)
+      reply(bot, chat_id, "Cancelled — nothing was added.")
+    end
+
+    # Pushes confirmed items to Mealie and spawns a cart rebuild.
+    def execute_add_items(bot, chat_id, items)
+      added   = []
+      failed  = []
+
+      items.each do |item|
+        addition = Models::ManualAddition.new(
+          name:     item[:search_term],
+          quantity: item[:qty],
+          unit:     item[:unit]
+        )
+        if addition.valid?
+          addition.save!
+          ok = push_to_next_order(name: item[:search_term], quantity: item[:qty], unit: item[:unit])
+          added  << item
+          failed << item[:search_term] unless ok
+        else
+          failed << "#{item[:search_term]} (validation: #{addition.errors.full_messages.join(', ')})"
+        end
+      end
+
+      lines = ["*#{added.size} item(s) added to your shopping list.*"]
+      added.each do |item|
+        unit_str = item[:unit] ? " #{item[:unit]}" : ''
+        lines << "  • #{item[:search_term]} — #{item[:qty]}#{unit_str}"
+      end
+      lines << "\n_Rebuilding cart..._"
+      lines << "_Cart ready message will arrive shortly._"
+
+      if failed.any?
+        lines << "\n#{failed.size} Mealie push failure(s): #{failed.join(', ')} — check logs."
+      end
+
+      reply(bot, chat_id, lines.join("\n"), parse_mode: 'Markdown')
+
+      # Rebuild cart in background (same as /shop)
+      project_root = File.expand_path('../..', __dir__)
+      Thread.new do
+        system('bundle', 'exec', 'ruby', "#{project_root}/main.rb", 'build-cart', '--force',
+               chdir: project_root)
+      rescue StandardError => e
+        warn "execute_add_items build-cart thread error: #{e.message}"
+      end
+    end
+
+    # Sends the preview message with inline [Confirm] [Edit] [Cancel] buttons.
+    def send_add_preview(bot, chat_id, items)
+      lines = ["*Cart additions preview:*", '']
+
+      existing = items.reject { |i| i[:is_new] }
+      new_items = items.select { |i| i[:is_new] }
+
+      if existing.any?
+        lines << "*Known items:*"
+        existing.each do |item|
+          unit_str = item[:unit] ? " #{item[:unit]}" : ''
+          lines << "  • #{item[:search_term]} — #{item[:qty]}#{unit_str}"
+        end
+      end
+
+      if new_items.any?
+        lines << '' if existing.any?
+        lines << "*New items* (will be searched as-is):"
+        new_items.each do |item|
+          unit_str = item[:unit] ? " #{item[:unit]}" : ''
+          lines << "  • #{item[:search_term]} — #{item[:qty]}#{unit_str}"
+        end
+      end
+
+      lines << ''
+      lines << "_Confirm to add all #{items.size} item(s) and rebuild cart, or Edit to change the list._"
+
+      keyboard = Telegram::Bot::Types::InlineKeyboardMarkup.new(
+        inline_keyboard: [[
+          Telegram::Bot::Types::InlineKeyboardButton.new(text: '✅ Add to cart', callback_data: 'add_confirm'),
+          Telegram::Bot::Types::InlineKeyboardButton.new(text: '✏️ Edit',        callback_data: 'add_edit'),
+          Telegram::Bot::Types::InlineKeyboardButton.new(text: '❌ Cancel',      callback_data: 'add_cancel')
+        ]]
+      )
+
+      reply_with_keyboard(bot, chat_id, lines.join("\n"), keyboard)
+    end
+
+    # Fuzzy-matches a parsed item against existing product_map entries.
+    # Returns a hash with :description, :search_term, :qty, :unit, :is_new.
+    def match_product_map_entry(item)
+      st_down  = item.search_term.downcase
+      existing = Models::ProductMap.where.not(search_term: '__skip__').find do |pm|
+        next false if pm.search_term.to_s.empty?
+
+        pm_st = pm.search_term.downcase
+        pm_st.include?(st_down) || st_down.include?(pm_st)
+      end
+
+      if existing
+        {
+          description: item.description,
+          search_term: existing.search_term,
+          qty:         existing.default_qty || item.qty,
+          unit:        existing.pack_unit || item.unit,
+          is_new:      false
+        }
+      else
+        {
+          description: item.description,
+          search_term: item.search_term,
+          qty:         item.qty,
+          unit:        item.unit,
+          is_new:      true
+        }
+      end
+    end
+
+    # Sends a message with an inline keyboard (reply helper doesn't accept keyboards).
+    def reply_with_keyboard(bot, chat_id, text, keyboard)
+      api = bot.respond_to?(:api) ? bot.api : bot
+      api.send_message(
+        chat_id:      chat_id,
+        text:         text,
+        parse_mode:   'Markdown',
+        reply_markup: keyboard
+      )
+    rescue StandardError => e
+      warn "Telegram send_message (keyboard) error: #{e.message}"
     end
 
     def cmd_list(bot, msg)
@@ -686,7 +927,7 @@ module Autochef
       text = <<~HELP
         *Mealie AutoChef — Bot Commands*
 
-        */add* <qty> <unit> <item> — add to next order
+        */add* <item(s)> — add one or many items; previews before touching cart
         */list* — show pending manual additions
         */remove* <id> — remove a manual addition
         */servings* <day> <n> — change servings for a meal (e.g. `/servings Mon 4`)

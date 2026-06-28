@@ -85,7 +85,7 @@ Updated at the end of each session alongside `testing_feedback.md`.
 | Enhancement 1 — qty consolidation by search_term | ✅ | 30 items → 24 unique search terms, quantities summed | 2026-06-28 (9th) |
 | Enhancement 2 — LLM qty consolidation | ✅ | `LlmQtyConsolidator` ran, adjustments printed to stdout | 2026-06-28 (9th) |
 | Pantry skip (`__skip__` sentinel) | ✅ | 29 items silently dropped; listed in stdout + Telegram | 2026-06-28 (9th) |
-| `main.rb automap` (LLM Assisted Recipe Mapping) | 🔧 | Feature 6 — implemented 2026-06-28; not yet tested on live system with unmapped items |
+| `main.rb automap` (LLM Assisted Recipe Mapping) | ✅ | Feature 6 — verified 2026-06-28 (12th): 35/35 plan id=5 items mapped (26 real, 9 pantry-skip), Telegram report sent. Bug fixed: key now uses original note text (indexed LLM response) so resolve_cart_item matches correctly |
 | `/automap` Telegram command | 🔧 | Implemented; spawns `main.rb automap` in background thread; not yet tested end-to-end |
 | `scripts/auto_map.rb` | 🔧 | CLI equivalent of `main.rb automap`; not yet tested on live system |
 
@@ -147,7 +147,7 @@ These will need end-to-end testing after each feature lands:
 
 | Feature | When to test |
 |---|---|
-| Auto-map (`main.rb automap`, Feature 6) | Next run with unmapped items — verify DB writes, Telegram report, pantry-skip logic |
+| Auto-map (`main.rb automap`, Feature 6) | ✅ Verified 2026-06-28 (12th session) |
 | LLM Cart Review (Feature 7) | After implementation — verify correction flow on a live cart |
 | LLM Aided Shopping (Feature 8) | After implementation — verify per-item screenshot + LLM selection |
 | Recipe Sleep (Feature 9) | After implementation — verify sleep/wake/reset bot buttons |
