@@ -92,13 +92,13 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (second session)
+## Current state as of 2026-06-28 (fourth session)
 
 ### What's been completed
 
 | Step | Status | Notes |
 |---|---|---|
-| `bundle install` | ✓ | 61 gems, clean |
+| `bundle install` | ✓ | 72 gems (rackup added this session) |
 | `.env` filled in | ✓ | All secrets present |
 | `config.yaml` filled in | ✓ | See config decisions below |
 | `main.rb check` | ✓ | `Result: OK`, Mealie v3.19.2 connected |
@@ -108,11 +108,13 @@ mealie-autochef-ruby/
 | Python venv + Playwright | ✓ | `.venv/bin/python3`, playwright 1.60 |
 | `CART_BUILDER_PYTHON` in `.env` | ✓ | Points to `.venv/bin/python3` |
 | Food Lion login | ✓ | `data/playwright_state.json` saved, 5.1KB |
-| `main.rb plan` (LLM) | ✓ | Working — plan_history id=4 pending approval |
-| `main.rb serve` + Telegram approval | **NEXT** | plan id=4 is pending |
-| `seed_product_map.rb` | **NOT YET** | Needs an approved plan first |
+| `main.rb plan` (LLM) | ✓ | Working — plan_history id=4 approved |
+| `main.rb serve` | ✓ | Bot + Sinatra form both start cleanly |
+| Telegram approval | ✓ | Plan id=4 approved; `last_planned` stamped on 4 recipes |
+| `main.rb shop` | ✓ | 54 items pushed to Mealie "Next Order" |
+| `seed_product_map.rb` | **NEXT** | Script fixed; Bailey runs it interactively |
 | `main.rb build-cart` | **NOT YET** | After seed_product_map |
-| Week configurator (Sinatra form) | ✓ | Implemented per WEEK_PLANNER_PLAN.md |
+| Week configurator (Sinatra form) | ✓ | Implemented + documented |
 | Docker deployment | **NOT YET** | After local flow verified |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
@@ -258,6 +260,36 @@ so `Dotenv.load` doesn't load the project `.env` and pollute test fixtures with 
 
 ---
 
+## Bugs fixed — 2026-06-28 fourth session
+
+**`rackup` gem missing — `main.rb serve` crashed immediately**
+Sinatra 4.x requires the `rackup` gem separately (no longer bundled with Rack).
+Fix: added `gem 'rackup', '~> 2.1'` to Gemfile.
+File: `Gemfile`
+
+**Mealie v3 shopping list endpoints moved from `/api/groups/` to `/api/households/`**
+All six shopping methods in `mealie_client.rb` used `/api/groups/shopping/lists/...`.
+Mealie v3 returns 404 for those paths. Verified correct paths by probing the live API:
+- List CRUD: `/api/households/shopping/lists` (GET, POST)
+- Single list: `/api/households/shopping/lists/{id}` (GET)
+- Item create: `/api/households/shopping/items` (POST — no list ID in path)
+- Item delete: `/api/households/shopping/items/{id}` (DELETE — no list ID in path)
+Fix: updated all six methods in `mealie_client.rb`. `remove_shopping_list_item` signature
+kept `list_id` parameter (unused, marked with `_list_id`) for call-site compatibility.
+File: `lib/autochef/mealie_client.rb`
+
+**`seed_product_map.rb` could not find ingredient names to map**
+Script read `ing['food_name']` from `entry['ingredients']` in the plan JSON, but
+`ShoppingListBuilder` never writes ingredient data back to the plan JSON — ingredients
+live only in Mealie. Result: "No ingredient data embedded" → manual entry prompt →
+blank input → "All ingredients already mapped" with 0 mappings made.
+Fix: script now fetches autochef-managed items directly from the live Mealie "Next Order"
+shopping list and uses their `note` text as the map key. This also aligns the key with
+what `resolve_cart_item` uses when looking up mappings during `build-cart`.
+File: `scripts/seed_product_map.rb`
+
+---
+
 ## Known issues (not yet fixed)
 
 **`est_total` never populated (deviation warning can't fire)**
@@ -349,19 +381,21 @@ bundle exec ruby scripts/seed_product_map.rb
 
 ## What's coming next (in order)
 
-1. **`bundle exec ruby main.rb serve`** — start the bot, approve plan id=4 via Telegram (the plan draft is already sent). Sinatra week configurator now also starts on port 3456 when `web.enabled: true`.
-2. **`bundle exec ruby scripts/seed_product_map.rb`** — map ingredients to Food Lion search terms (needs an approved plan)
-3. **`bundle exec ruby main.rb build-cart`** — first live cart build with Playwright
-4. **Docker deployment** on Unraid
-5. **Uptime Kuma push monitor** — Bailey creates a Push monitor in Kuma at 192.168.1.64:3001; paste the push URL into `.env` as `UPTIME_KUMA_PUSH_URL`
-6. **MCP setup** — Docker MCP server so Claude Code can manage containers directly
+1. **`bundle exec ruby scripts/seed_product_map.rb`** — Bailey runs this interactively in their own terminal. 54 items to map from the current "Next Order" list. Tips:
+   - Pure pantry items (water, salt, black pepper, olive oil) → mark "On Hand" in Mealie so they never appear, or just press Enter to accept the default search term and skip during cart build
+   - For real groceries, enter a clean Food Lion search term (e.g. "salmon fillet" for "1 lb raw salmon fillet")
+   - Use `--update` to re-map any that need fixing after the first pass
+2. **`bundle exec ruby main.rb build-cart`** — first live Playwright cart build against Food Lion To Go. `dry_run: true` is on — it builds the cart and stops, does not place the order.
+3. **Docker deployment** on Unraid — after local flow is verified end-to-end
+4. **Uptime Kuma push monitor** — Bailey creates a Push monitor in Kuma at 192.168.1.64:3001; paste the push URL into `.env` as `UPTIME_KUMA_PUSH_URL`
+5. **MCP setup** — Docker MCP server so Claude Code can manage containers directly
 
 ### When starting a new session
 
 1. Read this file in full
 2. Check memory files at `~/.claude/projects/-Users-baileygriffin-Projects-mealie-autochef-ruby/memory/`
 3. Run `bundle exec ruby main.rb check` to verify connectivity
-4. Check `Autochef::Models::PlanHistory.where(approved: 0)` to see if there's a pending plan
+4. Check DB state: `bundle exec ruby -e "require_relative 'lib/autochef/database'; Autochef::Database.connect!; require_relative 'lib/autochef/models/plan_history'; require_relative 'lib/autochef/models/product_map'; puts \"Pending plans: #{Autochef::Models::PlanHistory.where(approved: 0).count}\"; puts \"Product map entries: #{Autochef::Models::ProductMap.count}\""`
 5. Pick up from "What's coming next" above
 
 At the end of each session, update this file: mark completed steps, add newly discovered bugs, and update "What's coming next."

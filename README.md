@@ -27,8 +27,14 @@ Python file) are intentional and documented.
 Thursday ~6 pm — AutoChef picks this week's dinners
   → Claude Haiku arranges them into a perishability-aware schedule
   → sends a Telegram message: plan + inline Approve/Swap/Regenerate buttons
+  → "⚙ Configure week" button links to the web form at :3456/week
 
-You (before the weekend) — tap Approve (or Swap, or add a note)
+You (optionally, before approving)
+  → open the week configurator form
+  → set protein excludes, per-day overrides, servings, vibes, freeform note
+  → tap Regenerate in Telegram to apply
+
+You (before the weekend) — tap Approve
 
 AutoChef (on Approve)
   → scales servings, injects recurring staples, resolves product map
@@ -111,7 +117,7 @@ All commands follow the pattern `bundle exec ruby main.rb <command>`.
 | `check` | 0/1 | Validate config, run migrations, ping Mealie and Uptime Kuma |
 | `sync` | 1 | Pull `avg_rating` and `lastMade` from Mealie into `recipe_stats` |
 | `plan [note]` | 2+3 | Score recipes, build week plan, send Telegram draft for approval |
-| `serve` | 3+6 | Long-running Telegram bot + rufus-scheduler for reminders |
+| `serve` | 3+6 | Long-running Telegram bot + Sinatra week configurator (port 3456) + rufus-scheduler |
 | `shop` | 4 | Scale ingredients, inject staples, push "Next Order" list to Mealie |
 | `build-cart [--force]` | 5 | Fetch Next Order list → drive Food Lion cart via Playwright |
 | `feedback [--force]` | 6 | Increment times_cooked, update tag_weights from kept plan |
@@ -232,8 +238,16 @@ export CART_BUILDER_PYTHON="$(pwd)/.venv/bin/python3"
 bundle exec ruby scripts/seed_product_map.rb
 ```
 
-Interactive — maps Mealie ingredient names to Food Lion search terms and
-pack sizes. Re-run any time new ingredients appear.
+Interactive — fetches every autochef-managed item from the Mealie "Next Order"
+list and walks you through mapping each one to a Food Lion search term, pack
+size, and default quantity. Run this after the first `main.rb shop`.
+
+**First run:** expect ~50 items (all ingredients from your initial recipe pool).
+**Steady state:** only new ingredients from newly-added recipes need mapping —
+most weeks require no seeding at all. `main.rb shop` reports unmapped items
+by name at the end of its output.
+
+Flags: `--list` (show existing mappings), `--update` (re-map already-mapped items).
 
 ---
 
@@ -274,6 +288,9 @@ mealie-autochef/
 │   ├── reminders.rb              # thaw / night-before push notifications
 │   ├── safety.rb                 # spending cap, kill switch, idempotency
 │   ├── feedback.rb               # post-week learning loop
+│   ├── week_prefs_source.rb      # WeekPrefs/DayPrefs structs + source interface
+│   ├── sinatra_prefs_source.rb   # DB-backed implementation of WeekPrefsSource
+│   ├── web/app.rb                # Sinatra form served at :3456/week
 │   └── models/
 │       ├── recipe_stat.rb
 │       ├── tag_weight.rb
@@ -281,7 +298,8 @@ mealie-autochef/
 │       ├── product_map.rb
 │       ├── manual_addition.rb
 │       ├── plan_history.rb
-│       └── order_history.rb
+│       ├── order_history.rb
+│       └── week_pref.rb
 │
 ├── db/migrate/
 │   ├── 001_create_recipe_stats.rb
@@ -291,7 +309,8 @@ mealie-autochef/
 │   ├── 005_create_manual_additions.rb
 │   ├── 006_create_plan_history.rb
 │   ├── 007_create_order_history.rb
-│   └── 008_add_feedback_applied_to_order_history.rb
+│   ├── 008_add_feedback_applied_to_order_history.rb
+│   └── 009_create_week_prefs.rb
 │
 ├── cart_builder/
 │   ├── cart.py                   # Playwright Food Lion automation (Python only)
@@ -307,7 +326,8 @@ mealie-autochef/
 │   ├── scoring_spec.rb
 │   ├── planner_spec.rb
 │   ├── feedback_spec.rb
-│   └── safety_spec.rb
+│   ├── safety_spec.rb
+│   └── week_prefs_spec.rb
 │
 ├── docs/
 │   ├── SETUP_WALKTHROUGH.md
@@ -343,7 +363,7 @@ at every meaningful step.
 bundle exec rspec
 ```
 
-34 examples, 0 failures. Tests use in-memory SQLite (`:memory:`) and
+44 examples, 0 failures. Tests use in-memory SQLite (`:memory:`) and
 transaction rollback isolation — they never touch `data/autochef.db`.
 
 ---
