@@ -33,6 +33,7 @@ require_relative 'lib/autochef/recurring'
 require_relative 'lib/autochef/shopping'
 require_relative 'lib/autochef/safety'
 require_relative 'lib/autochef/cart_client'
+require_relative 'lib/autochef/llm_qty_consolidator'
 require_relative 'lib/autochef/notify'
 require_relative 'lib/autochef/reminders'
 require_relative 'lib/autochef/feedback'
@@ -374,6 +375,16 @@ def cmd_plan(freeform_note: nil)
 
   ping_uptime_kuma(ENV.fetch('UPTIME_KUMA_PUSH_URL', ''))
   0
+rescue StandardError => e
+  puts "FATAL (#{e.class}): #{e.message}"
+  begin
+    cfg ||= Autochef::Config.load
+    Autochef::Notifier.send_crash_alert(cfg, 'plan', e)
+    puts "Crash alert sent to Telegram."
+  rescue StandardError
+    nil
+  end
+  1
 end
 
 def resolve_perishability(pool, client)
@@ -606,6 +617,9 @@ def cmd_build_cart(force: false)
       key = raw_name.downcase.strip.gsub(/\s+/, ' ')
       mapping = Autochef::Models::ProductMap.find_by(key: key)
       skipped_names << raw_name if mapping&.search_term == '__skip__' && !raw_name.empty?
+    else
+      # Attach the ingredient name for LLM consolidation context.
+      result['sources'] = [item['note'].to_s.strip].reject(&:empty?)
     end
     result
   end
@@ -613,22 +627,32 @@ def cmd_build_cart(force: false)
   if skipped_names.any?
     puts "\nPantry items assumed on hand (#{skipped_names.size}) — verify stock before pickup:"
     skipped_names.each { |n| puts "  • #{n}" }
-    puts "  (Use /add <item> in Telegram if you need to restock any, then re-run build-cart --force)"
+    puts "  (Use /add <item> in Telegram if you need to restock any, then send /shop to rebuild.)"
   end
 
-  # Consolidate: multiple recipes may need the same search term — sum their quantities.
+  # Enhancement 1 — consolidate duplicate search terms: sum quantities, collect sources.
   grouped = cart_items.group_by { |i| i['search_term'] }
   merged_terms = grouped.select { |_, items| items.size > 1 }.keys
   cart_items = grouped.map do |_term, items|
-    total_qty = items.sum { |i| (i['default_qty'] || 1).to_i }
-    items.first.merge('default_qty' => total_qty)
+    total_qty   = items.sum { |i| (i['default_qty'] || 1).to_i }
+    all_sources = items.flat_map { |i| Array(i['sources']) }.uniq
+    items.first.merge('default_qty' => total_qty, 'sources' => all_sources)
   end
   if merged_terms.any?
     puts "\nConsolidated #{merged_terms.size} duplicate search term(s) (quantities summed):"
     merged_terms.each { |t| puts "  • #{t}" }
   end
 
-  # Build the input payload for cart.py.
+  # Enhancement 2 — LLM quantity rationalization (pack sizes, real-world grocery units).
+  if cfg.llm.enabled
+    plan_recipes = history.plan.values.map { |e| e['recipe_name'].to_s }.uniq
+    consolidator = Autochef::LlmQtyConsolidator.new(cfg)
+    puts "\nRunning LLM quantity consolidation..."
+    cart_items = consolidator.consolidate(cart_items, plan_recipes: plan_recipes)
+  end
+
+  # Build the input payload for cart.py (strip Ruby-only fields like 'sources').
+  cart_items_for_py = cart_items.map { |i| i.slice('search_term', 'default_qty', 'pack_unit') }
   input = {
     'run_key'                  => run_key,
     'store_name'               => cfg.store.name,
@@ -636,10 +660,10 @@ def cmd_build_cart(force: false)
     'spending_cap_usd'         => cfg.safety.spending_cap_usd,
     'cart_deviation_alert_pct' => cfg.safety.cart_deviation_alert_pct,
     'dry_run'                  => cfg.safety.dry_run,
-    'items'                    => cart_items
+    'items'                    => cart_items_for_py
   }
 
-  puts "\nInvoking cart builder (#{cart_items.size} item(s))..."
+  puts "\nInvoking cart builder (#{cart_items_for_py.size} item(s))..."
   puts "(dry_run: true — cart will be built but no order placed)" if cfg.safety.dry_run
 
   begin

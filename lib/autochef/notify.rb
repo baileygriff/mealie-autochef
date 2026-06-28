@@ -27,6 +27,24 @@ module Autochef
   class Notifier
     MAX_CALLBACK_DATA_BYTES = 64  # Telegram hard limit
 
+    # One-shot class method: send a crash alert without a polling loop.
+    # Uses the Telegram::Bot::Client in non-polling mode (just an HTTP POST).
+    # Safe to call from rescue blocks — swallows its own errors so a crash alert
+    # failure never masks the original exception.
+    def self.send_crash_alert(cfg, cmd, error)
+      return unless cfg.notify.channel == 'telegram' &&
+                    !cfg.notify.telegram_bot_token.to_s.empty?
+
+      text = "*AutoChef crash: #{cmd}*\n\n#{error.class}: #{error.message.slice(0, 300)}"
+      Telegram::Bot::Client.new(cfg.notify.telegram_bot_token).api.send_message(
+        chat_id:    cfg.notify.telegram_chat_id,
+        text:       text,
+        parse_mode: 'Markdown'
+      )
+    rescue StandardError
+      nil
+    end
+
     def initialize(cfg, mealie_client:, scorer: nil, llm_planner: nil)
       @cfg         = cfg
       @token       = cfg.notify.telegram_bot_token
@@ -84,10 +102,8 @@ module Autochef
 
       lines << "Pickup slot: #{result['pickup_slot']}" if result['pickup_slot']
 
-      if result['cart_url']
-        lines << ''
-        lines << "Cart: #{result['cart_url']}"
-      end
+      lines << ''
+      lines << "[Open cart in Food Lion To Go](https://www.foodlion.com/shop)"
 
       if result['flagged_items']&.any?
         lines << ''
@@ -100,17 +116,12 @@ module Autochef
         lines << ''
         lines << "*Pantry assumed on hand (#{skipped_items.size}) — verify stock:*"
         skipped_items.each { |n| lines << "  • #{n}" }
-        lines << "Use /add if you need to restock any, then re-run: build-cart --force"
+        lines << "Use /add <item> to restock pantry staples, then send /shop to rebuild the cart."
       end
 
       if deviation_warning
         lines << ''
         lines << "⚠️ *#{deviation_warning}*"
-      end
-
-      if result['screenshot_path']
-        lines << ''
-        lines << "Screenshot: `#{result['screenshot_path']}`"
       end
 
       if dry_run
@@ -123,6 +134,18 @@ module Autochef
         text:       lines.join("\n"),
         parse_mode: 'Markdown'
       )
+
+      if result['screenshot_path'] && File.exist?(result['screenshot_path'].to_s)
+        begin
+          bot_api.send_photo(
+            chat_id: @chat_id,
+            photo:   File.open(result['screenshot_path'], 'rb'),
+            caption: "Cart — #{Time.now.strftime('%Y-%m-%d %H:%M')}"
+          )
+        rescue StandardError => e
+          warn "Screenshot photo send failed: #{e.message}"
+        end
+      end
     end
 
     # Send a Telegram alert when the cart build was aborted (kill switch,
@@ -198,6 +221,7 @@ module Autochef
       when '/remove'   then cmd_remove(bot, msg, args)
       when '/staples'  then cmd_staples(bot, msg, args)
       when '/servings' then cmd_servings(bot, msg, args)
+      when '/shop'     then cmd_shop(bot, msg)
       when '/help'     then cmd_help(bot, msg)
       end
     end
@@ -595,6 +619,17 @@ module Autochef
       reply(bot, msg.chat.id, "Updated #{Date.parse(target_date_str).strftime('%A')} (#{recipe_name}) to *#{new_servings} servings*.", parse_mode: 'Markdown')
     end
 
+    def cmd_shop(bot, msg)
+      reply(bot, msg.chat.id, "Cart rebuild started — this takes a few minutes.")
+      project_root = File.expand_path('../..', __dir__)
+      Thread.new do
+        system('bundle', 'exec', 'ruby', "#{project_root}/main.rb", 'build-cart', '--force',
+               chdir: project_root)
+      rescue StandardError => e
+        warn "cmd_shop background thread error: #{e.message}"
+      end
+    end
+
     def cmd_help(bot, msg)
       text = <<~HELP
         *Mealie AutoChef — Bot Commands*
@@ -603,6 +638,7 @@ module Autochef
         */list* — show pending manual additions
         */remove* <id> — remove a manual addition
         */servings* <day> <n> — change servings for a meal (e.g. `/servings Mon 4`)
+        */shop* — rebuild the Food Lion cart (runs build-cart --force)
         */staples list* — show recurring staples
         */staples add* <name> <cadence> — add a staple (cadence: `every_order`, `every_2_orders`, `every_14_days`)
         */staples remove* <id> — deactivate a staple

@@ -5,110 +5,14 @@ When asked "what's next," pick the next unchecked item from the Feedback section
 
 ---
 
-## Feedback / Improvements (do these first)
+## Feedback / Improvements
 
-### 1. Enhancement 2 — LLM Quantity Consolidation
+Items 1–4 completed in the ninth session (2026-06-28). See [testing_feedback.md](testing_feedback.md) § ninth session for details.
 
-**Priority: next up.**
-
-Post-resolve pass: after `resolve_cart_item` runs on all items, Haiku receives the resolved `cart_items` list and merges/rationalizes quantities for real-world grocery pack sizes. This is a smarter layer on top of Enhancement 1 (which only deduplicates by exact `search_term`).
-
-**Examples of what this catches:**
-- 2 recipes each call for "a squeeze of lemon juice" → resolved as 2× "lemon" → LLM consolidates to 1 lemon
-- Recipe A needs 3 garlic cloves, recipe B needs 2 → LLM suggests 1 head of garlic (not 5 loose cloves)
-- 1 cup chicken broth + 2 cups chicken broth → 1 box/carton (32 oz)
-
-**Context sent to LLM:**
-- Resolved `cart_items`: `[{search_term, qty, unit, recipe_sources: ["Greek Salmon", "Lemon Pasta"]}]`
-- Request: merge where semantically equivalent, rationalize to real-world pack sizes, return adjusted qty per item
-
-**Output**: Updated `cart_items` with rationalized quantities. Consolidations printed to stdout so Bailey can verify.
-
-**Key files:**
-- `lib/autochef/llm_qty_consolidator.rb` — new file; calls Claude Haiku
-- `main.rb` — call after the `resolve_cart_item` pass, before invoking `cart_client.rb`
-
----
-
-### 2. Telegram UX Improvements (3 items)
-
-#### 2a. Food Lion link opens native app, not Telegram browser
-
-The cart-ready message currently sends `Cart: https://foodlion.com/shop` as plain text. Even as a tappable URL, Telegram opens it in its in-app browser, not the Food Lion app.
-
-Fix: send as a proper Markdown hyperlink. `https://www.foodlion.com/shop` has no underscores → safe in Markdown v1:
-```ruby
-lines << "[Open cart in Food Lion To Go](https://www.foodlion.com/shop)"
-```
-File: `lib/autochef/notify.rb`
-
-#### 2b. `/shop` Telegram command — rebuild cart from phone
-
-The pantry hint currently says "re-run: build-cart --force" — not actionable from a phone. Replace with a bot command.
-
-**`/shop` flow:**
-1. Bailey taps `/add <item>` for any pantry restocks (already works)
-2. Bailey sends `/shop`
-3. Bot replies immediately: "Cart rebuild started — this takes a few minutes."
-4. Bot spawns `bundle exec ruby main.rb build-cart --force` as a background thread
-5. When done, normal `send_cart_ready` fires
-
-Update pantry hint: `"Use /add <item> to restock pantry staples, then send /shop to rebuild the cart."`
-
-Implementation in `notify.rb`'s `handle_message`:
-```ruby
-when /^\/shop(\s|$)/
-  bot.api.send_message(chat_id: update.chat.id, text: "Cart rebuild started...")
-  Thread.new { system("cd #{project_root} && bundle exec ruby main.rb build-cart --force") }
-```
-Files: `lib/autochef/notify.rb`, `main.rb`
-
-#### 2c. Screenshot sent as Telegram photo (not plain-text path)
-
-`Screenshot: \`data/cart_screenshots/autochef-...\`` is a server-local path — useless on a phone. Replace with an actual Telegram photo upload.
-
-Fix: after sending the text cart-ready message, call `bot_api.send_photo`:
-```ruby
-if result['screenshot_path'] && File.exist?(result['screenshot_path'])
-  bot_api.send_photo(
-    chat_id: @chat_id,
-    photo: Faraday::UploadIO.new(result['screenshot_path'], 'image/png'),
-    caption: "Cart as of #{run_key}"
-  )
-end
-```
-Remove the `Screenshot: \`...\`` text line from the message.
-File: `lib/autochef/notify.rb`
-
----
-
-### 3. Fix `est_total` Never Populated
-
-**Known issue — deviation warning is silently disabled.**
-
-`cart.py`'s `make_output(...)` never passes `est_total`. `safety.deviation_warning` receives `nil` and returns immediately — budget deviation checking never fires.
-
-Fix: parse the cart total from the cart summary page in `cart.py` and include it in the JSON output as `est_total`. `safety.rb` already handles it; just needs the value piped through.
-
-Files: `cart_builder/cart.py`, `lib/autochef/cart_client.rb`
-
----
-
-### 4. Crash Alert on Total Plan Failure
-
-**Known issue — scheduled runs can fail silently.**
-
-If `main.rb plan` crashes before sending the Telegram draft (e.g. Mealie unreachable), nothing is sent. Mitigation: Uptime Kuma push monitor (not yet set up — see infrastructure section).
-
-Fix: add a top-level rescue around `cmd_plan` that sends a minimal Telegram alert on unhandled exception:
-```ruby
-rescue => e
-  Autochef::Notify.send_crash_alert("plan", e)
-end
-```
-`send_crash_alert` should use a bare HTTP POST (no bot polling dependency) so it works even if the bot thread never started.
-
-File: `lib/autochef/notify.rb`, `main.rb`
+- ✅ Enhancement 2 — LLM Quantity Consolidation (`lib/autochef/llm_qty_consolidator.rb`)
+- ✅ Telegram UX: Food Lion Markdown link, `/shop` command, screenshot as photo
+- ✅ `est_total` populated in `cart.py` output
+- ✅ Crash alert on plan failure (`Notifier.send_crash_alert`, method-level rescue in `cmd_plan`)
 
 ---
 

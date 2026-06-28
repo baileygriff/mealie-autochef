@@ -835,6 +835,7 @@ def run_build_cart(payload: dict) -> dict:
     log(f"Cart build complete. total={cart_total} flagged={flagged_items} slot={pickup_slot!r}")
     return make_output(
         "cart_built",
+        est_total=cart_total,
         cart_total=cart_total,
         pickup_slot=pickup_slot,
         flagged_items=flagged_items,

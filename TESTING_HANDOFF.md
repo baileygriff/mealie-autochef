@@ -91,7 +91,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (eighth session)
+## Current state as of 2026-06-28 (ninth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -112,6 +112,10 @@ mealie-autochef-ruby/
 | `seed_product_map.rb` | ✓ | All items mapped or pantry-skipped |
 | `main.rb build-cart` | ✓ | 24/24 items added (consolidated), $119.45 total, 0 flagged |
 | Week configurator (Sinatra form) | ✓ | Running at http://localhost:3456/week |
+| Enhancement 2 — LLM qty consolidation | ✓ | `lib/autochef/llm_qty_consolidator.rb`; runs after Enhancement 1 pass |
+| Telegram UX: Food Lion link, /shop, screenshot | ✓ | Markdown link, /shop bot command, photo upload |
+| `est_total` populated in cart.py output | ✓ | Now set to `cart_total`; deviation_warning can execute |
+| Crash alert on plan failure | ✓ | `Notifier.send_crash_alert`; top-level rescue in `cmd_plan` |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
@@ -228,13 +232,7 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
 
-### Feedback / Improvements (next up)
-1. Enhancement 2 — LLM quantity consolidation
-2. Telegram UX improvements (Food Lion app link, `/shop` command, screenshot as photo)
-3. Fix `est_total` never populated (deviation warning silently disabled)
-4. Add crash alert on total plan failure
-
-### New features (after feedback is cleared)
+### New features (feedback items 1–4 cleared in ninth session)
 5. Debug screenshots
 6. LLM Assisted Recipe Mapping (auto_map.rb — replaces manual seed script; auto-runs after /newrecipes)
 7. LLM Cart Review (auto after build-cart, screenshot+vision, auto-apply corrections)

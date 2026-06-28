@@ -6,11 +6,7 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ## Known Issues (not yet fixed)
 
-**`est_total` never populated — deviation warning silently disabled**
-`cart.py`'s `make_output(...)` never passes `est_total`. `safety.deviation_warning` receives `nil` and returns immediately. No impact on correctness, but budget deviation checking is silently disabled. Fix tracked in [future_enhancements.md](future_enhancements.md) § 3.
-
-**No Telegram alert on total plan failure**
-If `main.rb plan` crashes before sending the Telegram message (e.g. Mealie unreachable), nothing is sent. Scheduled runs fail silently. Mitigation: Uptime Kuma push monitor (not yet set up). Fix tracked in [future_enhancements.md](future_enhancements.md) § 4.
+None — all feedback items are cleared. See [future_enhancements.md](future_enhancements.md) for the new-features queue.
 
 ---
 
@@ -79,6 +75,28 @@ Run `bundle exec ruby scripts/seed_product_map.rb --list` to inspect all entries
 | easy-pan-roasted-pork-tenderloin-with-bourbon-soaked-figs-recipe | american | pork | quick | no |
 | lemon-pasta-with-salmon | mediterranean | seafood | quick | no |
 | fish-tacos-recipe | mexican | seafood | quick | no |
+
+---
+
+## Implemented — 2026-06-28 (ninth session)
+
+**Enhancement 2 — LLM Quantity Consolidation**
+Post-resolve pass: after Enhancement 1 (exact search_term dedup + qty sum), sends the consolidated cart_items to Claude Haiku. LLM rationalizes quantities for real-world grocery pack sizes (e.g. 2 lemons → 1 bag, 5 garlic cloves → 1 head, 3 cups broth → 1 carton). Only runs when `cfg.llm.enabled`. Adjustments and reasons printed to stdout. Falls back to original quantities on any error.
+Files: `lib/autochef/llm_qty_consolidator.rb` (new), `main.rb`
+
+**Telegram UX — 3 improvements**
+- 2a. Food Lion cart link is now a proper Markdown hyperlink: `[Open cart in Food Lion To Go](https://www.foodlion.com/shop)` — opens native app, not Telegram browser. Static URL has no underscores so it's safe in Markdown v1.
+- 2b. `/shop` bot command: replies immediately ("Cart rebuild started"), then spawns `bundle exec ruby main.rb build-cart --force` in a background thread. Normal `send_cart_ready` fires when done. Pantry hint updated to mention `/shop` instead of "re-run build-cart --force". Added to `/help`.
+- 2c. Screenshot now sent as a Telegram photo (`bot_api.send_photo`) instead of a server-local path in the message text. The `Screenshot: \`...\`` line is removed.
+File: `lib/autochef/notify.rb`
+
+**`est_total` populated in cart.py output**
+`make_output(...)` now passes `est_total=cart_total`. `safety.deviation_warning` can execute (deviation is 0% since both values come from the same cart summary, so no spurious warnings). `order_history.est_total` is now populated instead of nil.
+File: `cart_builder/cart.py`
+
+**Crash alert on total plan failure**
+`Notifier.send_crash_alert(cfg, cmd, error)` — class method, one-shot Telegram POST (no polling). Called from a method-level `rescue StandardError` in `cmd_plan` in `main.rb`. Catches unexpected exceptions that fall through all inner rescues. The alert fires even if the bot thread was never started. The inner rescue around the alert call ensures an alert failure never masks the original exception.
+Files: `lib/autochef/notify.rb`, `main.rb`
 
 ---
 

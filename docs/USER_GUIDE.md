@@ -18,14 +18,15 @@ You (anytime before Thursday pickup)
 AutoChef (on Approve)
   → scales servings → injects recurring staples → resolves product map
   → consolidates duplicate search terms (quantities summed)
+  → Claude Haiku rationalizes quantities for real-world pack sizes
   → pushes the "Next Order" list to Mealie
   → opens Food Lion To Go in a headed Chrome browser
   → clears any items from a previous run
   → adds every item, selects a pickup slot, STOPS before checkout
-  → sends "Cart ready: $XX.XX — [tap to review]"
+  → sends "Cart ready: $XX.XX" with a Food Lion link + cart screenshot
 
 You (Thursday)
-  Tap the link → review the cart → place the order
+  Tap the Food Lion link → review the cart → place the order
 
 After the week
   bundle exec ruby main.rb feedback
@@ -201,6 +202,7 @@ Sat  Salmon + Roasted Veg (2 servings)
 | `/remove <id>` | Removes an item from the list by its ID |
 | `/staples` | View and toggle recurring staples |
 | `/servings <day> <n>` | Change servings for one meal before you approve |
+| `/shop` | Rebuild the Food Lion cart (`build-cart --force`) from your phone — useful after `/add` |
 | `/note <text>` | Set a freeform guidance note for the next Regenerate |
 
 ### After the week (feedback)

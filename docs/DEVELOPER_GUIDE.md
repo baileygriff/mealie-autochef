@@ -28,6 +28,8 @@ main.rb (CLI entrypoint — one cmd_* method per command)
       │
       ├─► ShoppingListBuilder ► "Next Order" Mealie list (scaled, deduped, staples)
       │
+      ├─► LlmQtyConsolidator ► Claude Haiku rationalizes cart qty to pack sizes
+      │
       ├─► CartClient    ───► cart_builder/cart.py subprocess (Playwright / Food Lion)
       │
       ├─► Safety        ───► kill switch, spending cap, idempotency key
@@ -71,6 +73,7 @@ mealie-autochef/
 │   ├── scoring.rb                 # deterministic preference scorer
 │   ├── planner.rb                 # cook-day scheduling + perishability ordering
 │   ├── llm_planner.rb             # Claude weekly draft, strict JSON + fallback
+│   ├── llm_qty_consolidator.rb    # Claude Haiku: rationalize cart quantities to pack sizes
 │   ├── shopping.rb                # list gen, scaling, staples, product map
 │   ├── recurring.rb               # cadence-based staple injection
 │   ├── notify.rb                  # Telegram bot + approval flow
@@ -398,15 +401,18 @@ Telegram bot (blocking long-poll loop via `run_bot`) plus one-shot notification 
 
 | Method | Called from |
 |---|---|
-| `send_draft(plan_history_id:)` | `main.rb cmd_plan` |
+| `Notifier.send_crash_alert(cfg, cmd, error)` | `main.rb cmd_plan` rescue block |
+| `send_draft(plan_history_id:, note:)` | `main.rb cmd_plan` |
 | `send_cart_ready(result, dry_run:, deviation_warning:, skipped_items:)` | `main.rb cmd_build_cart` |
 | `send_cart_aborted(reason)` | `main.rb cmd_build_cart` |
 | `send_thaw_reminder(date:, recipe_name:)` | `lib/autochef/reminders.rb` |
 | `send_morning_ping(date:, recipe_name:)` | `lib/autochef/reminders.rb` |
 
+`send_crash_alert` is a class method using a one-shot Telegram POST (no polling loop). It swallows its own errors so an alert failure never masks the original exception.
+
 Private methods (internal bot callbacks, plan building, etc.) are behind the `private` keyword.
 
-**Telegram Markdown v1 constraint:** `send_cart_ready` uses `parse_mode: 'Markdown'`. Markdown v1 does not support nested formatting — do not wrap a backtick span inside an underscore span (`` _...`code`..._ ``). Use plain text or a single formatting type per span. The screenshot path line is intentionally plain text for this reason.
+**Telegram Markdown v1 constraint:** `send_cart_ready` uses `parse_mode: 'Markdown'`. Markdown v1 does not support nested formatting. Do not use underscores in URLs inside `[text](url)` links — they break the parser. The cart URL uses `https://www.foodlion.com/shop` (no underscores) deliberately. Screenshots are sent as a separate `send_photo` call rather than embedding the path as text.
 
 ### `Autochef::Safety`
 
@@ -526,7 +532,7 @@ Ruby calls `cart_builder/cart.py` as a subprocess via `Open3.capture3`.
 {
   "status": "cart_built",
   "abort_reason": null,
-  "est_total": null,
+  "est_total": 87.40,
   "cart_total": 87.40,
   "pickup_slot": "Sun 10:00 AM - 12:00 PM",
   "flagged_items": ["saffron"],
@@ -537,7 +543,7 @@ Ruby calls `cart_builder/cart.py` as a subprocess via `Open3.capture3`.
 
 **Exit codes:** `0` = ran to completion (check `status` field). Non-zero = unexpected crash; Ruby treats this as a hard failure and raises `CartClient::CartBuilderError`.
 
-**Known limitation:** `est_total` is never populated in the current `cart.py` implementation (`run_build_cart` calls `make_output` without computing a pre-cart estimate). The `deviation_warning` check in `safety.rb` always receives `nil` for `est_total` and therefore never fires.
+**`est_total`:** `cart.py` sets `est_total = cart_total` in its output (both come from the same cart summary page). This populates `order_history.est_total` and allows `deviation_warning` to run; deviation will always be 0% since both values are the same source. A meaningful pre-build estimate (e.g. last week's total) could be wired in later without changing the contract.
 
 ---
 
@@ -640,7 +646,7 @@ SELECT * FROM order_history ORDER BY created_at DESC LIMIT 5;
 - **Cart builder** (`cart_builder/cart.py`) automates a consumer website not built for automation. Expect selector rot when Food Lion ships UI changes. The `SELECTOR MAINTENANCE` section in `cart.py` documents the recovery procedure (Playwright Codegen). Keep `dry_run: true` and manual checkout as permanent defaults.
 - **`SEL_CART_ITEM_REMOVE` selectors** — confirmed working as of 2026-06-28 (cleared 27–60 items on live runs, including `SEL_CART_ITEM_REMOVE_CONFIRM` for the OK dialog). If selectors break after a Food Lion UI update, use Playwright Codegen to find the new remove-button selector.
 - **Product map key matching** — `main.rb`'s `resolve_cart_item` looks up `product_map` by `item['note']` (the Mealie shopping list item's display text). `seed_product_map.rb` keys entries by the same `note` text fetched from the live "Next Order" list, so they agree for standard use. The edge case: if a `ProductMap` record has a `display_name` override set, `push_ingredient` will write that override as the Mealie item `note`, which then won't match the product map's `food_name`-based key. Avoid setting `display_name` unless you also update the `key` to match.
-- **`est_total` never populated** — `cart.py`'s `run_build_cart` doesn't compute a pre-cart estimate, so `safety.deviation_warning` always receives `nil` and never fires.
+- **`est_total` baseline** — `cart.py` sets `est_total = cart_total` (same source). Deviation warning runs but always shows 0%. A real estimate (e.g. previous week's actual) would require additional wiring on the Ruby side.
 - **LLM output** — always JSON-validated with a deterministic fallback. A bad model response can never break a run; at worst it adds a `llm_error` note to the plan output.
 
 ## `cmd_build_cart` pipeline (main.rb)
@@ -658,10 +664,18 @@ Mealie "Next Order" listItems (raw)
         ▼
 cart_items (resolved)
         │
-        │  group_by(:search_term) → sum default_qty per term
+        │  group_by(:search_term) → sum default_qty per term (Enhancement 1)
         │  — consolidates duplicate terms from multiple recipes
+        │  — attaches 'sources' (ingredient names) for LLM context
         ▼
-cart_items (consolidated)
+cart_items (consolidated by search_term)
+        │
+        │  LlmQtyConsolidator.consolidate (Enhancement 2, when llm.enabled)
+        │  — Claude Haiku rationalizes quantities for grocery pack sizes
+        │  — 2 lemons → 1, 5 garlic cloves → 1 head, 3 cups broth → 1 carton, etc.
+        │  — 'sources' field stripped before sending to cart.py
+        ▼
+cart_items (pack-size rationalized)
         │
         │  CartClient.build_cart(input) → cart.py subprocess
         │  — clear_cart() runs first, removing all prior items
