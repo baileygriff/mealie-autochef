@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (fifth session)
+## Current state as of 2026-06-28 (seventh session)
 
 ### What's been completed
 
@@ -107,15 +107,15 @@ mealie-autochef-ruby/
 | `main.rb sync` | ✓ | 11 recipe stats in local DB |
 | Python venv + Playwright | ✓ | `.venv/bin/python3`, playwright 1.60 |
 | `CART_BUILDER_PYTHON` in `.env` | ✓ | Points to `.venv/bin/python3` |
-| Food Lion login | ✓ | `data/playwright_state.json` saved, 5.1KB |
+| Food Lion login | ✓ | Re-done with full auth + 2FA, `playwright_state.json` refreshed |
 | `main.rb plan` (LLM) | ✓ | plan_history id=4 approved |
 | `main.rb serve` | ✓ | Bot + Sinatra form both start cleanly |
 | Telegram approval | ✓ | Plan id=4 approved |
 | `main.rb shop` | ✓ | 59 items pushed to Mealie "Next Order" |
 | `seed_product_map.rb` | ✓ | All items mapped or pantry-skipped |
-| `main.rb build-cart` | **NEXT** | Just fixed CART_BUILDER_PYTHON bug — ready to run |
+| `main.rb build-cart` | ✓ | 30/30 items added, $110.92 total, 0 flagged — verified end-to-end |
 | Week configurator (Sinatra form) | ✓ | Implemented + documented |
-| Docker deployment | **NOT YET** | After local flow verified end-to-end |
+| Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
 ### Product map state
@@ -296,6 +296,77 @@ File: `scripts/seed_product_map.rb`
 
 ---
 
+## Bugs fixed / implemented — 2026-06-28 seventh session
+
+**Cart not cleared before re-run — duplicate items on `--force`**
+Each `build-cart --force` run added items on top of the previous run's cart, creating duplicates.
+Fix: added `clear_cart()` to `cart_builder/cart.py`. Runs after `navigate_to_store`, before any items are added. Opens the cart sidebar and iterates through all remove buttons until the cart is empty, then returns to the store page.
+Items added via the Telegram `/add` command are in the Mealie "Next Order" list and are re-added by the normal build flow — they are not lost.
+New selector: `SEL_CART_ITEM_REMOVE`.
+File: `cart_builder/cart.py`
+
+**Telegram Markdown crash on cart-ready message (screenshot line)**
+`_Screenshot: \`data/cart_screenshots/...\`_` mixed underscore italic with backtick code — Telegram Markdown v1 cannot parse nested formatting. Results in 400 Bad Request at byte offset ~1187.
+Fix: rewrote to plain text `Screenshot: data/cart_screenshots/...`.
+File: `lib/autochef/notify.rb`
+
+**Enhancement 1 — Quantity consolidation for duplicate search terms**
+Multiple recipes needing the same item (e.g. "salmon fillet" × 2, "garlic" × 3) were sent as separate cart entries, causing cart.py to search and add them individually.
+Fix: in `cmd_build_cart` in `main.rb`, after resolving cart items, `group_by(:search_term)` and sum `default_qty`. Items that are consolidated are printed to stdout so Bailey can verify the math.
+File: `main.rb`
+
+---
+
+## Bugs fixed — 2026-06-28 sixth session
+
+**Pantry items not visible to Bailey anywhere in the flow**
+`cmd_build_cart` silently dropped `__skip__` items with no output. Added visibility in two places:
+- stdout: prints all pantry-skipped items before invoking cart.py, with `/add` hint
+- Telegram cart-ready message: new "Pantry assumed on hand" section with same hint
+Fix also added `skipped_items:` kwarg to `send_cart_ready` in `notify.rb`.
+Files: `main.rb`, `lib/autochef/notify.rb`
+
+**Telegram markdown crash on cart-ready message**
+`send_cart_ready` added a line with backtick inside underscore formatting
+(`` _...`build-cart --force`_ ``). Telegram Markdown v1 can't parse nested formatting
+— resulted in a 400 error from the Telegram API.
+Fix: rewrote hint line to plain text with no nested formatting.
+File: `lib/autochef/notify.rb`
+
+**Food Lion blocks headless Chrome (Kasada bot detection)**
+`setup_context()` used `headless=True`. Food Lion's Kasada protection detects headless
+Chrome and shows "Access is temporarily restricted" before the store page loads,
+making all search bar lookups fail. Headed Chrome is much harder to fingerprint.
+Fix: changed `setup_context(p, headless=True)` → `headless=False` in `build_cart`.
+File: `cart_builder/cart.py`
+
+**Food Lion session was unauthenticated — Sign In modal appeared mid-automation**
+The old `playwright_state.json` had no login cookies (session from initial run didn't
+include authentication). After bypassing Kasada with headed Chrome, a Sign In modal
+appeared during cart building and blocked Add button clicks.
+Fix: re-ran `python3 cart_builder/cart.py --login`, solved Kasada slider manually,
+signed in with email/password, completed 2FA. New `playwright_state.json` saved with
+full authenticated session. Future runs won't need login until session expires.
+
+**"Pick a Shopping Method" modal blocks Add button clicks**
+After login, a "Pick a Shopping Method" modal appears on every `foodlion.com/shop`
+load. Playwright's keyboard events (`page.keyboard.press("Escape")`) are filtered
+as untrusted synthetic events by Food Lion's JS. CSS/text selectors for "Continue
+Shopping" also failed. JS `evaluate()` with `offsetParent` visibility check also failed.
+Fix: `dismiss_modals()` now uses `page.mouse.click(10, 10)` (backdrop click, outside
+any centered modal) + JS click fallback. Also called before each Add button click since
+the modal can persist during item searches.
+File: `cart_builder/cart.py`
+
+**`SEL_ADD_BTN` too broad — matched "Add to List" instead of "Add to Cart"**
+`'button:has-text("Add")'` and `'button[aria-label*="Add" i]'` matched Food Lion's
+"Add to List" button (saved shopping list feature) instead of the "Add to Cart" button
+(active To Go pickup cart). Items were silently added to the wrong place.
+Fix: replaced broad selectors with specific "Add to Cart" text variants only.
+File: `cart_builder/cart.py`
+
+---
+
 ## Bugs fixed — 2026-06-28 fifth session
 
 **Pantry staples: `"On Hand"` toggle in Mealie does not work for free-text ingredients**
@@ -423,17 +494,42 @@ bundle exec ruby scripts/seed_product_map.rb
 
 ## What's coming next (in order)
 
-1. **`bundle exec ruby main.rb build-cart`** — first live Playwright cart build. The CART_BUILDER_PYTHON fix was just applied this session. What to expect:
-   - Chrome opens headlessly and searches Food Lion for each of the 30 mapped items
-   - `dry_run: true` — builds the cart and stops, never places the order
-   - Takes a few minutes (30 items × search + add)
-   - Flagged items (not found, out of stock) appear in the Telegram cart-ready message
-   - If Food Lion bot detection fires again, see `SELECTOR MAINTENANCE` in `cart_builder/cart.py`
-   - If the session has expired: `source .venv/bin/activate && python3 cart_builder/cart.py --login`
-2. **Post-build review** — check the cart at the Food Lion To Go link in the Telegram message. Note any items that searched to the wrong product and fix their search terms with `seed_product_map.rb --update`.
-3. **Docker deployment** on Unraid — after the local cart build is verified
-4. **Uptime Kuma push monitor** — Bailey creates a Push monitor in Kuma at 192.168.1.64:3001; paste the push URL into `.env` as `UPTIME_KUMA_PUSH_URL`
-5. **MCP setup** — Docker MCP server so Claude Code can manage containers directly
+1. **Verify cart clearing on next `build-cart --force`** — `clear_cart()` uses Instacart-UI selectors that haven't been confirmed against the live site yet. Watch the browser on the next run: the cart should empty before items are added. If the selectors miss, add the correct ones to `SEL_CART_ITEM_REMOVE` in `cart.py`. Playwright Codegen: `playwright codegen https://www.foodlion.com/shop` → interact with the Remove button.
+
+2. **Enhancement 2 — LLM quantity consolidation** — Bailey wants smart grocery consolidation: "2 recipes both need a squeeze of lemon juice → 1 lemon". Implementation plan:
+   - After `main.rb shop` pushes items to Mealie "Next Order", a small Claude Haiku call receives the raw ingredient list + quantities and outputs a consolidated, human-like shopping list (respecting pack sizes and real-world units)
+   - Input: array of `{name, quantity, unit}` from the Mealie list
+   - Output: array of `{search_term, qty, unit, rationale}` replacing the raw list
+   - The consolidated list feeds directly into cart.py's `items` payload (bypassing `resolve_cart_item` which currently does the literal lookup)
+   - Alternatively: run consolidation before cart.py is called, treating the resolved `cart_items` as the input and having Haiku merge/rationalize quantities
+   - **Decision needed:** where in the pipeline to inject this — pre-shop (Mealie list) or post-resolve (cart items before cart.py). Post-resolve is lower risk since the product map is already applied.
+
+3. **LLM tagging / auto product mapping experiment** — Instead of manually seeding `search_term`, `default_qty`, `pack_unit` via `seed_product_map.rb`, have Claude Haiku auto-suggest these values given the ingredient name, then verify each suggestion against live Food Lion search results via Playwright. This would drastically reduce the manual seeding burden for new recipes.
+   - Rough plan: new script `scripts/auto_map.rb` → calls Haiku to suggest `search_term`/qty/unit → invokes a Playwright search to confirm the product exists → writes to `product_map`
+   - Falls back to the interactive `seed_product_map.rb` prompt for anything Haiku can't confidently map
+
+4. **Post-build cart review** — check the Food Lion cart manually (link in the Telegram message). Note any items that resolved to the wrong product and fix their search terms via `seed_product_map.rb --update`.
+
+5. **Docker deployment** on Unraid — after stable local operation confirmed
+
+6. **Uptime Kuma push monitor** — Bailey creates a Push monitor in Kuma at 192.168.1.64:3001; paste the push URL into `.env` as `UPTIME_KUMA_PUSH_URL`
+
+7. **MCP setup** — Docker MCP server so Claude Code can manage containers directly
+
+### cart.py state as of this session
+
+- `headless=False` — headed Chrome required; Food Lion blocks headless
+- `clear_cart()` — runs after page load, before items are added; clears all existing cart items; uses `SEL_CART_ITEM_REMOVE` (not confirmed against live UI yet — verify on next run)
+- `dismiss_modals()` — backdrop click at (10,10); called at startup AND before each Add click
+- `SEL_ADD_BTN` — confirmed working: matched `text='Add to cart'` on all 30 items in the verified run
+- `playwright_state.json` — refreshed with full auth + 2FA on 2026-06-28; will eventually expire
+
+### If Food Lion session expires
+
+```bash
+source .venv/bin/activate && python3 cart_builder/cart.py --login
+# Solve Kasada slider → dismiss welcome modal → sign in with email/password → complete 2FA → press Enter
+```
 
 ### When starting a new session
 

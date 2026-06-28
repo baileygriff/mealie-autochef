@@ -17,8 +17,10 @@ You (anytime before the weekend)
 
 AutoChef (on Approve)
   → scales servings → injects recurring staples → resolves product map
+  → consolidates duplicate search terms (quantities summed)
   → pushes the "Next Order" list to Mealie
-  → opens Food Lion To Go in a headless browser
+  → opens Food Lion To Go in a headed Chrome browser
+  → clears any items from a previous run
   → adds every item, selects a pickup slot, STOPS before checkout
   → sends "Cart ready: $XX.XX — [tap to review]"
 
@@ -374,6 +376,14 @@ Check that `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set correctly in `.en
 **Cart not matching expected items**
 
 Check the product map — items without a mapping are flagged rather than guessed. Run `scripts/seed_product_map.rb` to add or fix mappings.
+
+**Cart has duplicate items after a `--force` re-run**
+
+This was a bug in earlier sessions. `build-cart` now clears the entire Food Lion cart at the start of every run before adding items. If you still see duplicates, the `SEL_CART_ITEM_REMOVE` selectors in `cart_builder/cart.py` may need updating — watch the browser during the run and note which button text/attribute removes an item, then file an issue.
+
+**`/add` items disappeared from the cart**
+
+Items added via `/add` are in the Mealie "Next Order" list and are always re-added by the cart build. They are not lost when the cart is cleared — they come back in the normal add flow. If an `/add` item is missing, check that it's still in the Next Order list (`/list` in the bot) and that it has a product map entry (`seed_product_map.rb --list`).
 
 **`data/PAUSE` file exists**
 

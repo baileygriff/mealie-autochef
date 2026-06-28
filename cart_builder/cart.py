@@ -174,9 +174,11 @@ SEL_ADD_BTN = [
     '[data-testid="add-to-cart-button"]',
     '[data-testid*="add-item"]',
     '[data-testid*="add-to-cart"]',
-    'button[aria-label*="Add" i]',
-    'button:has-text("Add")',
-    'button:has-text("+ Add")',
+    'button[aria-label*="Add to cart" i]',
+    'button[aria-label*="Add to Cart" i]',
+    'button:has-text("Add to Cart")',
+    'button:has-text("+ Add to Cart")',
+    'button:has-text("Add to cart")',
 ]
 
 # Cart subtotal / total display
@@ -204,6 +206,16 @@ SEL_CART_BTN = [
     '[data-testid*="cart-button"]',
     '[aria-label*="cart" i]',
     'a[href*="cart"]',
+]
+
+# Remove/delete button on an individual cart item — used by clear_cart()
+SEL_CART_ITEM_REMOVE = [
+    '[data-testid="trash-button"]',
+    '[data-testid*="remove-item"]',
+    '[data-testid*="delete-item"]',
+    '[data-testid*="item-remove"]',
+    'button[aria-label*="Remove" i]',
+    'button[aria-label*="Delete" i]',
 ]
 
 
@@ -379,6 +391,72 @@ def setup_context(playwright, headless: bool = True) -> tuple[Browser, BrowserCo
     return browser, context
 
 
+def clear_cart(page: Page) -> int:
+    """
+    Remove all existing items from the Food Lion cart before a fresh build.
+    Re-runs are always safe: the cart is cleared then rebuilt from scratch.
+    Items added via AutoChef's /add command are in the Mealie shopping list
+    and will be re-added by the normal build flow — they are not lost.
+    Returns the number of items removed.
+    """
+    log("Clearing existing cart items...")
+    try_click(page, SEL_CART_BTN, timeout=8000)
+    pace(1500)
+
+    removed = 0
+    for _ in range(60):  # safety cap
+        found = False
+        for sel in SEL_CART_ITEM_REMOVE:
+            els = page.locator(sel)
+            if els.count() > 0:
+                try:
+                    els.first.click()
+                    pace(600)
+                    removed += 1
+                    found = True
+                    break
+                except Exception:
+                    continue
+        if not found:
+            break
+
+    log(f"  Cleared {removed} item(s) from cart.")
+    # Return to the store page for the normal add flow
+    page.goto(FOODLION_TOGO_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+    pace(1500)
+    dismiss_modals(page)
+    return removed
+
+
+def dismiss_modals(page: Page) -> None:
+    """
+    Dismiss known Food Lion interstitial modals that block automation.
+    Tries backdrop click (top-left corner) then JS click by exact text.
+    """
+    pace(1500)  # let modal render
+
+    # Click the backdrop — top-left corner is outside any centered modal
+    try:
+        page.mouse.click(10, 10)
+        pace(500)
+        log("  Clicked backdrop to dismiss modal.")
+    except Exception:
+        pass
+
+    # JS fallback: find "Continue Shopping" by exact text, no visibility check
+    clicked = page.evaluate("""
+        () => {
+            const all = Array.from(document.querySelectorAll('a, button, span'));
+            const target = all.find(el => el.textContent.trim() === 'Continue Shopping');
+            if (target) { target.click(); return true; }
+            return false;
+        }
+    """)
+    if clicked:
+        log("  Dismissed modal via JS (Continue Shopping).")
+        pace(500)
+
+
 def navigate_to_store(page: Page, store_name: str) -> bool:
     """
     Navigate to Food Lion To Go and confirm we're on the right store.
@@ -399,6 +477,9 @@ def navigate_to_store(page: Page, store_name: str) -> bool:
     page_title = page.title()
     page_url = page.url
     log(f"  Landed on: {page_url} | title: {page_title}")
+
+    # Dismiss any interstitial modals before proceeding.
+    dismiss_modals(page)
 
     # If we're on a generic landing page rather than a storefront, look for
     # "Shop" or "Start shopping" links and click through.
@@ -581,6 +662,17 @@ def add_item_to_cart(page: Page, item: dict) -> tuple[bool, Optional[str]]:
         log(f"    FLAGGED: {reason}")
         return False, reason
 
+    # Log the matched button's text so we can verify SEL_ADD_BTN hit the right button
+    try:
+        btn_text = add_btn.inner_text().strip()
+        btn_label = add_btn.get_attribute("aria-label") or ""
+        log(f"    Add button matched → text={btn_text!r} aria-label={btn_label!r}")
+    except Exception:
+        pass
+
+    # Dismiss any modal that may be blocking the Add button
+    dismiss_modals(page)
+
     # Click Add once; for qty > 1, click the increment button
     try:
         add_btn.click()
@@ -670,12 +762,15 @@ def run_build_cart(payload: dict) -> dict:
     cart_url: Optional[str] = None
 
     with sync_playwright() as p:
-        browser, context = setup_context(p, headless=True)
+        browser, context = setup_context(p, headless=False)
         page = context.new_page()
 
         try:
             # 1. Navigate to Food Lion To Go
             navigate_to_store(page, store_name)
+
+            # 1b. Clear any items left from a previous run before adding fresh
+            clear_cart(page)
 
             # 2. Ensure pickup mode
             set_pickup_mode(page)

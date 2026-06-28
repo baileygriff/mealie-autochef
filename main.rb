@@ -597,7 +597,36 @@ def cmd_build_cart(force: false)
   end
 
   puts "Found #{raw_items.size} item(s) in Next Order."
-  cart_items = raw_items.filter_map { |item| resolve_cart_item(item) }
+
+  skipped_names = []
+  cart_items = raw_items.filter_map do |item|
+    result = resolve_cart_item(item)
+    if result.nil?
+      raw_name = item['note'].to_s.strip
+      key = raw_name.downcase.strip.gsub(/\s+/, ' ')
+      mapping = Autochef::Models::ProductMap.find_by(key: key)
+      skipped_names << raw_name if mapping&.search_term == '__skip__' && !raw_name.empty?
+    end
+    result
+  end
+
+  if skipped_names.any?
+    puts "\nPantry items assumed on hand (#{skipped_names.size}) — verify stock before pickup:"
+    skipped_names.each { |n| puts "  • #{n}" }
+    puts "  (Use /add <item> in Telegram if you need to restock any, then re-run build-cart --force)"
+  end
+
+  # Consolidate: multiple recipes may need the same search term — sum their quantities.
+  grouped = cart_items.group_by { |i| i['search_term'] }
+  merged_terms = grouped.select { |_, items| items.size > 1 }.keys
+  cart_items = grouped.map do |_term, items|
+    total_qty = items.sum { |i| (i['default_qty'] || 1).to_i }
+    items.first.merge('default_qty' => total_qty)
+  end
+  if merged_terms.any?
+    puts "\nConsolidated #{merged_terms.size} duplicate search term(s) (quantities summed):"
+    merged_terms.each { |t| puts "  • #{t}" }
+  end
 
   # Build the input payload for cart.py.
   input = {
@@ -657,7 +686,8 @@ def cmd_build_cart(force: false)
     if cfg.notify.channel == 'telegram' && !cfg.notify.telegram_bot_token.to_s.empty?
       Autochef::Notifier.new(cfg, mealie_client: client)
                         .send_cart_ready(result, dry_run: cfg.safety.dry_run,
-                                         deviation_warning: dev_warning)
+                                         deviation_warning: dev_warning,
+                                         skipped_items: skipped_names)
       puts "Telegram notification sent."
     end
 

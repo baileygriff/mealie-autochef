@@ -38,8 +38,10 @@ You (before the weekend) — tap Approve
 
 AutoChef (on Approve)
   → scales servings, injects recurring staples, resolves product map
+  → consolidates duplicate search terms (quantities summed)
   → pushes "Next Order" list to Mealie
-  → opens Food Lion To Go in a headless browser
+  → opens Food Lion To Go in a headed Chrome browser
+  → clears any items from a previous run
   → adds every item, selects a pickup slot, STOPS before checkout
   → sends "Cart ready: $XX.XX — tap here to review and place"
 
@@ -365,6 +367,16 @@ bundle exec rspec
 
 44 examples, 0 failures. Tests use in-memory SQLite (`:memory:`) and
 transaction rollback isolation — they never touch `data/autochef.db`.
+
+---
+
+## Cart builder behavior
+
+- **Headed Chrome** — `headless=False` is required; Food Lion's bot-detection blocks headless browsers.
+- **Cart cleared on every run** — `build-cart` empties the existing Food Lion cart before adding items, so `--force` re-runs are safe and never create duplicates.
+- **Quantity consolidation** — if multiple recipes need the same Food Lion search term (e.g. "salmon fillet" for two recipes), their quantities are summed into one cart entry before cart.py is called.
+- **Pantry items** — ingredients marked `s` in `seed_product_map.rb` are excluded from the cart and listed to stdout + Telegram so you can verify stock before pickup.
+- **`/add` items** are in the Mealie "Next Order" list and are always re-added by the normal build flow — they survive a cart clear.
 
 ---
 

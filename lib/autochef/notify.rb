@@ -71,7 +71,7 @@ module Autochef
     # Send a "cart is ready" Telegram message after a successful cart build.
     # result is the Hash parsed from cart.py's OUTPUT_SCHEMA JSON.
     # deviation_warning is an optional String from Safety#deviation_warning.
-    def send_cart_ready(result, dry_run:, deviation_warning: nil)
+    def send_cart_ready(result, dry_run:, deviation_warning: nil, skipped_items: [])
       lines = ["*Cart ready✅*"]
       lines[0] += ' _(dry run — cart built, no order placed)_' if dry_run
       lines << ''
@@ -96,6 +96,13 @@ module Autochef
         lines << "_These were not substituted. Add them manually in the Food Lion app._"
       end
 
+      if skipped_items.any?
+        lines << ''
+        lines << "*Pantry assumed on hand (#{skipped_items.size}) — verify stock:*"
+        skipped_items.each { |n| lines << "  • #{n}" }
+        lines << "_Use /add <item> if you need to restock, then re-run build-cart --force_"
+      end
+
       if deviation_warning
         lines << ''
         lines << "⚠️ *#{deviation_warning}*"
@@ -103,7 +110,7 @@ module Autochef
 
       if result['screenshot_path']
         lines << ''
-        lines << "_Screenshot: `#{result['screenshot_path']}`_"
+        lines << "Screenshot: #{result['screenshot_path']}"
       end
 
       if dry_run

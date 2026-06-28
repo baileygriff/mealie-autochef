@@ -398,12 +398,14 @@ Telegram bot (blocking long-poll loop via `run_bot`) plus one-shot notification 
 | Method | Called from |
 |---|---|
 | `send_draft(plan_history_id:)` | `main.rb cmd_plan` |
-| `send_cart_ready(result, dry_run:, deviation_warning:)` | `main.rb cmd_build_cart` |
+| `send_cart_ready(result, dry_run:, deviation_warning:, skipped_items:)` | `main.rb cmd_build_cart` |
 | `send_cart_aborted(reason)` | `main.rb cmd_build_cart` |
 | `send_thaw_reminder(date:, recipe_name:)` | `lib/autochef/reminders.rb` |
 | `send_morning_ping(date:, recipe_name:)` | `lib/autochef/reminders.rb` |
 
 Private methods (internal bot callbacks, plan building, etc.) are behind the `private` keyword.
+
+**Telegram Markdown v1 constraint:** `send_cart_ready` uses `parse_mode: 'Markdown'`. Markdown v1 does not support nested formatting — do not wrap a backtick span inside an underscore span (`` _...`code`..._ ``). Use plain text or a single formatting type per span. The screenshot path line is intentionally plain text for this reason.
 
 ### `Autochef::Safety`
 
@@ -634,7 +636,35 @@ SELECT * FROM order_history ORDER BY created_at DESC LIMIT 5;
 
 ## Known-fragile areas
 
-- **Cart builder** (`cart_builder/cart.py`) automates a consumer website not built for automation. Expect selector rot when Food Lion / Instacart ships UI changes. The `SELECTOR MAINTENANCE` section in `cart.py` documents the recovery procedure (Playwright Codegen). Keep `dry_run: true` and manual checkout as permanent defaults.
+- **Cart builder** (`cart_builder/cart.py`) automates a consumer website not built for automation. Expect selector rot when Food Lion ships UI changes. The `SELECTOR MAINTENANCE` section in `cart.py` documents the recovery procedure (Playwright Codegen). Keep `dry_run: true` and manual checkout as permanent defaults.
+- **`SEL_CART_ITEM_REMOVE` selectors** — the cart-clearing selectors in `cart.py` were added based on expected Instacart UI conventions but have not been confirmed against the live site. If `clear_cart()` logs `Cleared 0 item(s)` when items are present, run Playwright Codegen to find the correct remove-button selector and update `SEL_CART_ITEM_REMOVE`.
 - **Product map key matching** — `main.rb`'s `resolve_cart_item` looks up `product_map` by `item['note']` (the Mealie shopping list item's display text). `seed_product_map.rb` keys entries by the same `note` text fetched from the live "Next Order" list, so they agree for standard use. The edge case: if a `ProductMap` record has a `display_name` override set, `push_ingredient` will write that override as the Mealie item `note`, which then won't match the product map's `food_name`-based key. Avoid setting `display_name` unless you also update the `key` to match.
 - **`est_total` never populated** — `cart.py`'s `run_build_cart` doesn't compute a pre-cart estimate, so `safety.deviation_warning` always receives `nil` and never fires.
 - **LLM output** — always JSON-validated with a deterministic fallback. A bad model response can never break a run; at worst it adds a `llm_error` note to the plan output.
+
+## `cmd_build_cart` pipeline (main.rb)
+
+The full item resolution and consolidation pipeline inside `cmd_build_cart`:
+
+```
+Mealie "Next Order" listItems (raw)
+        │
+        │  resolve_cart_item(item)
+        │  — looks up product_map by item['note']
+        │  — returns nil for __skip__ entries (pantry items) → filter_map drops them
+        │  — returns {search_term, default_qty, pack_unit} for mapped items
+        │  — falls back to raw item name + Mealie quantity for unmapped items
+        ▼
+cart_items (resolved)
+        │
+        │  group_by(:search_term) → sum default_qty per term
+        │  — consolidates duplicate terms from multiple recipes
+        ▼
+cart_items (consolidated)
+        │
+        │  CartClient.build_cart(input) → cart.py subprocess
+        │  — clear_cart() runs first, removing all prior items
+        │  — adds each item via Food Lion search → "Add to cart" click
+        ▼
+OrderHistory saved + Telegram cart-ready notification
+```
