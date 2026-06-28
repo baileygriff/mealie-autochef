@@ -54,7 +54,12 @@ OUTPUT_SCHEMA (stdout, JSON):
     "pickup_slot": str | null,
     "flagged_items": [str],              # out-of-stock / unmapped, never silently substituted
     "screenshot_path": str | null,
-    "cart_url": str | null
+    "cart_url": str | null,
+    "previous_purchases_stats": {        # null when previous purchases page not accessible
+      "available": int,                  # items visible on Previous Purchases page
+      "matched": int,                    # items added directly from Previous Purchases
+      "search_adds": int                 # items that fell back to search
+    } | null
   }
 
 SELECTOR MAINTENANCE:
@@ -98,6 +103,21 @@ from playwright.sync_api import (
 # Canonical entry point for Food Lion's Instacart-powered storefront.
 # If Food Lion redirects to a different path, update this and AUTH_EXPECTED_DOMAIN.
 FOODLION_TOGO_URL = "https://www.foodlion.com/shop"
+
+# Direct URL to the My Items / Previous Purchases section.
+# Food Lion's Instacart white-label uses this path pattern.
+PREV_PURCHASES_URL = "https://www.foodlion.com/shop/my_items"
+
+# Minimum word-overlap fraction to consider a previous purchase a match.
+# 0.6 means 60% of significant words in the search term must appear in the
+# product name. Two-word terms need both words; three-word terms need two.
+PREV_MATCH_THRESHOLD = 0.6
+
+# Words that carry no useful signal for matching (stripped before scoring).
+PREV_STOP_WORDS = frozenset({
+    "a", "an", "the", "of", "with", "and", "or", "for", "in", "to",
+    "lb", "lbs", "oz", "pkg", "pack", "count", "ct", "fl", "g", "kg", "ml",
+})
 
 # The domain Playwright should land on after login — used to detect redirects.
 # Food Lion To Go may redirect to instacart.com or stay on foodlion.com.
@@ -225,6 +245,43 @@ SEL_CART_ITEM_REMOVE_CONFIRM = [
     'button:has-text("Confirm")',
 ]
 
+# Navigation link to the My Items / Previous Purchases section
+SEL_MY_ITEMS_LINK = [
+    '[data-testid*="my-items"]',
+    'a[href*="my_items"]',
+    'a:has-text("My Items")',
+    'nav a:has-text("My Items")',
+    '[aria-label*="My Items" i]',
+]
+
+# "Previous Purchases" tab within the My Items section
+SEL_PREV_PURCHASES_TAB = [
+    '[data-testid="previous-purchases-tab"]',
+    '[data-testid*="previous-purchases"]',
+    'button:has-text("Previous Purchases")',
+    '[role="tab"]:has-text("Previous")',
+    'a:has-text("Previous Purchases")',
+]
+
+# Product card containers on the Previous Purchases page
+SEL_PREV_PRODUCT_CARD = [
+    '[data-testid*="store-product"]',
+    '[data-testid*="product-card"]',
+    '[data-testid*="item-card"]',
+    'article[data-testid]',
+]
+
+# Product name element within a Previous Purchases card
+SEL_PREV_PRODUCT_NAME = [
+    '[data-testid*="item-name"]',
+    '[data-testid*="product-name"]',
+    '[data-testid="item_name"]',
+    'p[data-testid*="name"]',
+    'span[data-testid*="name"]',
+    'h2',
+    'h3',
+]
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -319,6 +376,7 @@ def make_output(
     flagged_items: Optional[list[str]] = None,
     screenshot_path: Optional[str] = None,
     cart_url: Optional[str] = None,
+    previous_purchases_stats: Optional[dict] = None,
 ) -> dict:
     return {
         "status": status,
@@ -329,6 +387,7 @@ def make_output(
         "flagged_items": flagged_items or [],
         "screenshot_path": screenshot_path,
         "cart_url": cart_url,
+        "previous_purchases_stats": previous_purchases_stats,
     }
 
 
@@ -741,6 +800,223 @@ def capture_cart_summary(page: Page, run_key: str) -> tuple[Optional[float], Opt
     return cart_total, screenshot_path, cart_url
 
 
+# ─── Previous Purchases ────────────────────────────────────────────────────────
+
+def _normalize_words(text: str) -> frozenset:
+    """Return significant words from text as a lowercase frozenset, stop words removed."""
+    words = set(re.sub(r"[^a-z0-9 ]", "", text.lower()).split())
+    return frozenset(words - PREV_STOP_WORDS)
+
+
+def _words_match(sw: str, pw: str) -> bool:
+    """True if search word and product word are the same or differ only by a trailing 's'."""
+    return sw == pw or sw.rstrip("s") == pw or sw == pw.rstrip("s")
+
+
+def _match_score(search_term: str, product_name: str) -> float:
+    """
+    Fraction of significant words in search_term that appear in product_name.
+    Basic plural handling (chicken ↔ chickens, breast ↔ breasts).
+    """
+    s_words = _normalize_words(search_term)
+    p_words = _normalize_words(product_name)
+    if not s_words:
+        return 0.0
+    matched = sum(1 for sw in s_words if any(_words_match(sw, pw) for pw in p_words))
+    return matched / len(s_words)
+
+
+def _navigate_to_previous_purchases(page: Page) -> bool:
+    """
+    Navigate to the Previous Purchases section of Food Lion To Go.
+    Tries direct URL first; falls back to clicking the My Items nav link.
+    Returns True if the page loaded (even if empty).
+    """
+    # Fast path: direct URL
+    try:
+        page.goto(PREV_PURCHASES_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+        pace(1500)
+        dismiss_modals(page)
+        try_click(page, SEL_PREV_PURCHASES_TAB, timeout=4000)
+        pace(1000)
+        current = page.url
+        if "my_items" in current or "previous" in current.lower():
+            log(f"  Navigated to Previous Purchases: {current}")
+            return True
+    except Exception as e:
+        log(f"  Direct URL to Previous Purchases failed: {e}")
+
+    # Fallback: click My Items link from store page
+    try:
+        page.goto(FOODLION_TOGO_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+        pace(1500)
+        dismiss_modals(page)
+        clicked = try_click(page, SEL_MY_ITEMS_LINK, timeout=8000)
+        if clicked:
+            pace(1500)
+            try_click(page, SEL_PREV_PURCHASES_TAB, timeout=4000)
+            pace(1000)
+            log(f"  Navigated to My Items via nav link: {page.url}")
+            return True
+    except Exception as e:
+        log(f"  Nav-link approach to Previous Purchases failed: {e}")
+
+    log("  Previous Purchases page not accessible — all items will use search")
+    return False
+
+
+def _collect_prev_purchase_items(page: Page) -> list:
+    """
+    Scroll through the Previous Purchases page and return a list of
+    {name: str, card_sel: str} for every visible product card.
+    """
+    # Scroll down to trigger lazy-loaded items, then back to top
+    for _ in range(6):
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        pace(600)
+    page.evaluate("window.scrollTo(0, 0)")
+    pace(500)
+
+    items = []
+    for card_sel in SEL_PREV_PRODUCT_CARD:
+        cards = page.locator(card_sel)
+        count = cards.count()
+        if count == 0:
+            continue
+        log(f"  Found {count} card(s) using: {card_sel}")
+        for i in range(count):
+            try:
+                card = cards.nth(i)
+                name = None
+                for name_sel in SEL_PREV_PRODUCT_NAME:
+                    try:
+                        name = card.locator(name_sel).first.inner_text(timeout=800).strip()
+                        if name:
+                            break
+                    except Exception:
+                        continue
+                if name:
+                    items.append({"name": name, "card_sel": card_sel})
+            except Exception:
+                continue
+        if items:
+            break
+
+    return items
+
+
+def _click_add_in_prev_card(page: Page, prev_item: dict, qty: int) -> bool:
+    """
+    Find the product card matching prev_item['name'] and click its Add button.
+    Uses filter(has_text=) to locate the card by its name text rather than a
+    stale index — robust against dynamic list reordering after scrolling.
+    Returns True on success.
+    """
+    card_sel = prev_item["card_sel"]
+    name = prev_item["name"]
+
+    try:
+        card = page.locator(card_sel).filter(has_text=name).first
+        card.scroll_into_view_if_needed(timeout=5000)
+        pace(300)
+
+        add_btn = None
+        for sel in SEL_ADD_BTN:
+            btn = card.locator(sel)
+            if btn.count() > 0:
+                add_btn = btn.first
+                break
+
+        if add_btn is None:
+            log(f"    No Add button found in card for '{name}'")
+            return False
+
+        dismiss_modals(page)
+        add_btn.click()
+        pace(CART_SETTLE_MS)
+
+        if qty > 1:
+            inc_sel = [
+                '[data-testid*="increment"]',
+                '[aria-label*="Increase" i]',
+                'button:has-text("+")',
+            ]
+            for _ in range(qty - 1):
+                if not try_click(page, inc_sel, timeout=3000):
+                    break
+                pace(300)
+
+        return True
+
+    except Exception as e:
+        log(f"    Error adding '{name}' from Previous Purchases: {e}")
+        return False
+
+
+def add_from_previous_purchases(page: Page, items: list) -> dict:
+    """
+    Navigate to Food Lion's Previous Purchases section, match shopping items
+    to products there by word-overlap score, add matched items directly,
+    then return the rest for the normal search-based flow.
+
+    Returns:
+        added:           list[dict] — items added from Previous Purchases
+        remaining:       list[dict] — items that need search-based adding
+        available_count: int — total items visible on the Previous Purchases page
+    """
+    log("=== Previous Purchases pass ===")
+
+    if not _navigate_to_previous_purchases(page):
+        return {"added": [], "remaining": list(items), "available_count": 0}
+
+    prev_items = _collect_prev_purchase_items(page)
+    available_count = len(prev_items)
+    log(f"  {available_count} item(s) visible in Previous Purchases")
+
+    if not prev_items:
+        page.goto(FOODLION_TOGO_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+        pace(1500)
+        dismiss_modals(page)
+        return {"added": [], "remaining": list(items), "available_count": 0}
+
+    added = []
+    remaining = []
+
+    for item in items:
+        search_term = item["search_term"]
+        qty = max(1, int(item.get("default_qty") or 1))
+
+        best_match = None
+        best_score = 0.0
+        for prev in prev_items:
+            score = _match_score(search_term, prev["name"])
+            if score > best_score:
+                best_score = score
+                best_match = prev
+
+        if best_match and best_score >= PREV_MATCH_THRESHOLD:
+            log(f"  Match ({best_score:.0%}): '{search_term}' → '{best_match['name']}'")
+            if _click_add_in_prev_card(page, best_match, qty):
+                added.append(item)
+                log(f"    ✓ Added from Previous Purchases")
+            else:
+                remaining.append(item)
+                log(f"    ✗ Add click failed — will search")
+        else:
+            score_str = f"{best_score:.0%}" if best_match else "0%"
+            log(f"  No match for '{search_term}' (best {score_str}) — will search")
+            remaining.append(item)
+
+    log(f"  Pass complete: {len(added)} from prev purchases, {len(remaining)} need search")
+
+    # Return to the main store page for the search-based adds
+    page.goto(FOODLION_TOGO_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+    pace(1500)
+    dismiss_modals(page)
+
+    return {"added": added, "remaining": remaining, "available_count": available_count}
+
+
 # ─── Main cart-build flow ─────────────────────────────────────────────────────
 
 def run_build_cart(payload: dict) -> dict:
@@ -770,6 +1046,7 @@ def run_build_cart(payload: dict) -> dict:
     cart_total: Optional[float] = None
     screenshot_path: Optional[str] = None
     cart_url: Optional[str] = None
+    pp_stats: Optional[dict] = None
 
     with sync_playwright() as p:
         browser, context = setup_context(p, headless=False)
@@ -794,9 +1071,18 @@ def run_build_cart(payload: dict) -> dict:
                 log("WARNING: Pickup slot not confirmed — continuing without slot selection")
             pace()
 
-            # 4. Add each item
+            # 4. Add items — Previous Purchases first, search-based fallback for the rest
             log(f"Adding {len(items)} item(s) to cart...")
-            for item in items:
+            prev_result = add_from_previous_purchases(page, items)
+            pp_stats = {
+                "available": prev_result["available_count"],
+                "matched": len(prev_result["added"]),
+                "search_adds": len(prev_result["remaining"]),
+            }
+            if prev_result["added"]:
+                log(f"  {len(prev_result['added'])}/{len(items)} item(s) added from Previous Purchases")
+
+            for item in prev_result["remaining"]:
                 pace(STEP_DELAY_MS)
                 success, flagged_reason = add_item_to_cart(page, item)
                 if not success:
@@ -816,6 +1102,7 @@ def run_build_cart(payload: dict) -> dict:
                     flagged_items=flagged_items,
                     screenshot_path=screenshot_path,
                     cart_url=cart_url,
+                    previous_purchases_stats=pp_stats,
                 )
 
         except Exception as exc:
@@ -841,6 +1128,7 @@ def run_build_cart(payload: dict) -> dict:
         flagged_items=flagged_items,
         screenshot_path=screenshot_path,
         cart_url=cart_url,
+        previous_purchases_stats=pp_stats,
     )
 
 

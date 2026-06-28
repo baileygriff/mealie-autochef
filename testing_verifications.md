@@ -70,6 +70,7 @@ Updated at the end of each session alongside `testing_feedback.md`.
 | `set_pickup_mode` | ⏳ | Runs in flow; no explicit screenshot verification |
 | `add_item_to_cart` | ✅ | 24/24 items matched using `text='Add to cart'` selector | 2026-06-28 (9th) |
 | `capture_cart_summary` | ✅ | `cart_total`, `item_count` returned correctly; screenshot saved | 2026-06-28 (9th) |
+| `add_from_previous_purchases` | 🔧 | Implemented 2026-06-28 (13th); selectors untested against live site — watch stderr for "Previous Purchases pass" and `available` count | — |
 | Out-of-stock / no-results handling | ⏳ | Code path exists (`flagged` list); never triggered on live runs |
 | Session expiry re-login | ❌ | `playwright_state.json` will eventually expire; re-login flow documented but not re-tested since 2026-06-28 |
 
@@ -148,6 +149,7 @@ These will need end-to-end testing after each feature lands:
 | Feature | When to test |
 |---|---|
 | Auto-map (`main.rb automap`, Feature 6) | ✅ Verified 2026-06-28 (12th session) |
+| Previous Purchases optimization | Run `main.rb build-cart --force`, check stderr for "Previous Purchases pass", verify `available` count > 0 and items added correctly. If `available=0`, update selectors in `cart.py` using playwright codegen on `foodlion.com/shop/my_items`. |
 | LLM Cart Review (Feature 7) | After implementation — verify correction flow on a live cart |
 | LLM Aided Shopping (Feature 8) | After implementation — verify per-item screenshot + LLM selection |
 | Recipe Sleep (Feature 9) | After implementation — verify sleep/wake/reset bot buttons |

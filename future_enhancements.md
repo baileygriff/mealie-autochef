@@ -15,6 +15,7 @@ Items 1–4 completed in the ninth session (2026-06-28). See [testing_feedback.m
 - ✅ Crash alert on plan failure (`Notifier.send_crash_alert`, method-level rescue in `cmd_plan`)
 - ✅ `/add` multi-item LLM flow — `LlmItemParser`, preview/confirm/edit/cancel, cart rebuild (twelfth session)
 - ✅ Automap Telegram report reformatted — two sections: Grocery additions (bullet, qty/unit) + Pantry skips (compact comma list) (twelfth session)
+- 🔧 Previous Purchases cart optimization — `add_from_previous_purchases` in `cart_builder/cart.py`; tries Food Lion's "My Items / Previous Purchases" section before search, adds matched items by brand/variant, falls back gracefully to search for unmatched. `previous_purchases_stats` in output. **Needs live build-cart test (thirteenth session)**
 
 ---
 

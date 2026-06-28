@@ -784,6 +784,11 @@ def cmd_build_cart(force: false)
     puts "Order history saved (id=#{record.id})."
     puts "Screenshot: #{result['screenshot_path']}" if result['screenshot_path']
 
+    if (pp = result['previous_purchases_stats'])
+      puts "Previous purchases: #{pp['matched']}/#{pp['available']} matched " \
+           "(#{pp['search_adds']} via search)"
+    end
+
     if dev_warning
       puts "\nWARNING: #{dev_warning}"
     end

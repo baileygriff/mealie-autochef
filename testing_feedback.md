@@ -80,6 +80,23 @@ Run `bundle exec ruby scripts/seed_product_map.rb --list` to inspect all entries
 
 ---
 
+## Implemented — 2026-06-28 (thirteenth session)
+
+**Feature: Previous Purchases cart optimization**
+Before the search-based add loop, `run_build_cart` now navigates to Food Lion's "My Items / Previous Purchases" section, scrolls to load all visible product cards (up to 6 scroll passes), and fuzzy-matches each shopping item against prior-purchase products using word-overlap scoring (threshold: 60%). Matched items are added directly from the Previous Purchases page — preserving the exact brand/variant bought before. Unmatched items fall back to the existing search flow unchanged. Falls back gracefully to full search if the page is unreachable or returns 0 cards. `previous_purchases_stats: {available, matched, search_adds}` added to cart.py output JSON, logged to stdout in `main.rb`, and shown in the Telegram cart-ready message.
+
+**Key implementation notes:**
+- Selectors in `SEL_PREV_PRODUCT_CARD` / `SEL_PREV_PRODUCT_NAME` are based on Instacart white-label patterns; not yet verified against live Food Lion. If 0 items found, run `playwright codegen https://www.foodlion.com/shop/my_items` to inspect DOM and update selectors.
+- Word matching handles basic plurals (`breast ↔ breasts`) via `_words_match`. Stop words stripped (`lb`, `oz`, `pkg`, articles, etc.).
+- Cards are located for Add-click via `filter(has_text=name)` not by index — robust against reordering after scroll-triggered lazy loading.
+- The feature can only improve over time: every real purchase adds items to Previous Purchases.
+
+Files: `cart_builder/cart.py` (new constants, 5 new functions, updated `run_build_cart`), `main.rb` (log pp stats), `lib/autochef/notify.rb` (Telegram stat line)
+
+**Status: 🔧 implemented, not yet tested on live system — run `main.rb build-cart --force` and look for "Previous Purchases pass" in stderr output to verify.**
+
+---
+
 ## Implemented / Fixed — 2026-06-28 (twelfth session)
 
 **Bug: `LlmRecipeMapper` saved keys with trailing ` 0.0` suffix**

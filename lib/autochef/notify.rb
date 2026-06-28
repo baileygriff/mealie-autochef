@@ -103,6 +103,10 @@ module Autochef
 
       lines << "Pickup slot: #{result['pickup_slot']}" if result['pickup_slot']
 
+      if (pp = result['previous_purchases_stats']) && pp['available'].to_i > 0
+        lines << "Previous purchases: #{pp['matched']}/#{pp['available']} matched"
+      end
+
       lines << ''
       lines << "[Open cart in Food Lion To Go](https://www.foodlion.com/shop)"
 

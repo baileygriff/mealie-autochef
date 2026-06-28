@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (twelfth session)
+## Current state as of 2026-06-28 (thirteenth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -122,6 +122,7 @@ mealie-autochef-ruby/
 | Feature 6 — LLM Assisted Recipe Mapping | ✓ | Verified end-to-end: 35/35 plan id=5 items mapped correctly; bug fixed (key suffix + key mismatch) |
 | `/add` multi-item LLM flow | ✓ | `LlmItemParser`, preview + confirm/edit/cancel buttons, triggers cart rebuild on confirm |
 | Automap Telegram report reformatted | ✓ | Sectioned: Grocery additions (bullet, qty/unit) + Pantry skips (compact comma list) |
+| Previous Purchases cart optimization | 🔧 | Implemented; needs live `build-cart` test — see thirteenth session notes |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
@@ -218,6 +219,8 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **`last_planned` is set on approval, not on draft save** — this was a bug fixed 2026-06-28. Don't move it back. Drafts only update `times_planned`.
 
+**Previous Purchases selectors are best-guess** — `SEL_PREV_PRODUCT_CARD`, `SEL_PREV_PRODUCT_NAME`, `SEL_MY_ITEMS_LINK`, and `SEL_PREV_PURCHASES_TAB` in `cart_builder/cart.py` were written from knowledge of Instacart's white-label DOM patterns but have not been tested against live Food Lion. If the Previous Purchases pass reports 0 items found, open `playwright codegen https://www.foodlion.com/shop/my_items`, navigate to Previous Purchases, inspect the card container and name elements, and update the constants. The feature falls back to full search if it can't navigate to the page or finds 0 cards — existing behavior is never regressed.
+
 **`LlmRecipeMapper` uses numbered items + index echo** — items sent as `1. {note}`, `2. {note}`, ...  and the LLM must return `"index": N` in each response. The save loop uses `unmapped[index - 1]['note']` as the product_map key, NOT `s['ingredient_name']`. This ensures keys match what `resolve_cart_item` looks up (the full Mealie note). Do not revert to using `s['ingredient_name']` as the key — it strips quantity prefixes and breaks the lookup.
 
 **`/add` flow with LLM enabled** — `cmd_add` routes to `cmd_add_llm` which shows a preview with [✅ Add to cart] [✏️ Edit] [❌ Cancel] buttons before touching Mealie. Pending state `{ action: :waiting_add_confirmation, items: [...] }` is stored in `@pending_states[chat_id]`. Confirmation triggers `execute_add_items` which saves ManualAddition records, pushes to Mealie, and spawns `build-cart --force` in a background thread.
@@ -250,9 +253,12 @@ bundle exec ruby scripts/seed_product_map.rb
 9. Recipe Sleep feature
 10. LLM Recipe Suggestions (`/newrecipes`)
 
-### Added this session
-- ✅ `/add` multi-item LLM flow — `LlmItemParser`, preview/confirm/edit/cancel, cart rebuild on confirm (`lib/autochef/llm_item_parser.rb`, `lib/autochef/notify.rb`)
-- ✅ Automap Telegram report reformatted — Grocery additions section (search_term + qty/unit) + Pantry skips (compact comma list)
+### Added this session (thirteenth)
+- 🔧 Previous Purchases cart optimization — `add_from_previous_purchases` in `cart_builder/cart.py`; navigates to Food Lion's "My Items / Previous Purchases" section before the search loop, fuzzy-matches shopping items to prior-purchase products (word-overlap score ≥0.6), adds matches directly (right brand/variant), falls back to search for the rest. `previous_purchases_stats` added to output JSON; logged in `main.rb` stdout and Telegram cart-ready message. **Needs live `build-cart` test to verify selector accuracy.**
+
+### Completed in earlier sessions
+- ✅ `/add` multi-item LLM flow — `LlmItemParser`, preview/confirm/edit/cancel, cart rebuild on confirm (`lib/autochef/llm_item_parser.rb`, `lib/autochef/notify.rb`) (twelfth session)
+- ✅ Automap Telegram report reformatted — Grocery additions section (search_term + qty/unit) + Pantry skips (compact comma list) (twelfth session)
 
 ### Infrastructure (after stable local operation)
 11. Docker deployment on Unraid
