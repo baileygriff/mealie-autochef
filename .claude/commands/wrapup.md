@@ -82,7 +82,19 @@ If new user preferences or working-style patterns emerged, update `user_bailey.m
 
 If a new architectural constraint or gotcha was discovered, create a new `feedback_*.md` memory file and add it to `MEMORY.md`.
 
-## Step 7 — Commit and push
+## Step 7 — Resolve spell-check issues
+
+After updating all docs, check for spell-check warnings in the modified markdown files. The project uses `cspell.json` at the repo root to manage known technical terms.
+
+**For each diagnostic flagged as "Unknown word":**
+1. If it's a genuine typo or awkward phrasing — reword the text.
+2. If it's a legitimate technical term, product name, CLI flag, or project-specific word (e.g. `venv`, `CAPSOLVER`, `FlareSolverr`, `kpsdk`, `autochef`) — add it to the `words` array in `cspell.json`.
+
+Do not add common English words to `cspell.json` even if the spell-checker flags them — fix the text instead.
+
+After adding words to `cspell.json`, stage it along with the other files in Step 8.
+
+## Step 8 — Commit and push
 
 Stage all modified tracked files and any new files that belong in the repo (skip `.env`, `data/autochef.db`, `data/backups/`, `data/playwright_state.json`, `data/cart_screenshots/`).
 
@@ -93,5 +105,7 @@ Add debug screenshots (feature 5); update session docs
 ```
 
 Use a HEREDOC for the commit message. After committing, push to the remote.
+
+Stage `cspell.json` if it was updated in Step 7.
 
 Report what was committed and pushed.

@@ -43,7 +43,16 @@
     "llm",
     "LLM",
     "Instacart",
-    "codegen"
+    "codegen",
+    "venv",
+    "FlareSolverr",
+    "Solverr",
+    "capsolver",
+    "CAPSOLVER",
+    "kpsdk",
+    "Kasada",
+    "AntiKasadaTask",
+    "autosolving"
   ],
   "ignorePaths": [
     "data/**",
