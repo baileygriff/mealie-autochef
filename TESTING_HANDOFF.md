@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (eighteenth session)
+## Current state as of 2026-06-28 (nineteenth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -303,10 +303,23 @@ If you're not sure what success looks like, **ask Bailey** — no assumptions.
 ### New features (feedback items 1–4 cleared in ninth session; Feature 6 verified in twelfth)
 5. Debug screenshots
 6. ✅ LLM Assisted Recipe Mapping — verified twelfth session; bug fixed (product_map key mismatch)
-7. LLM Cart Review (auto after build-cart, screenshot+vision, auto-apply corrections)
+7. **Cart Review, Auto-Fix + /cart-correction** (supersedes old Feature 7 LLM Cart Review) — see spec in `future_enhancements.md § 7`
 8. LLM Aided Shopping (toggleable via Telegram, PreferenceNote model, skip+note on bad match)
 9. Recipe Sleep feature
 10. LLM Recipe Suggestions (`/newrecipes`)
+11. **Recipe Telegram Commands** (`/recipelist`, `/recipe`) — see spec in `future_enhancements.md § 11`
+
+### Infrastructure
+12. **Unraid Docker Display (Xvfb)** — must be done before Docker deploy; spec in `future_enhancements.md § 12`
+13. Docker Deployment on Unraid (depends on Xvfb being in place)
+14. Uptime Kuma push monitor
+15. MCP Setup
+
+### Added this session (nineteenth)
+- 🗂️ **Feature 7 spec revised: Cart Review, Auto-Fix + /cart-correction** — fully supersedes old Feature 7 (LLM Cart Review). New spec in `future_enhancements.md § 7`: per-item `items_added` output from cart.py, `LlmCartReviewer` (vision LLM), one-attempt auto-fix for clear wrong products/variants, structured review table in cart-ready message (Needs attention / Quantity notes / Auto-corrected / High confidence), `/cart-correction` natural language command → correction preview → product_map update → build-cart --force → fresh table.
+- 🗂️ **Feature 11 spec: Recipe Telegram Commands** — `/recipelist` (cook days from current approved plan, local DB only) and `/recipe` (by day or fuzzy title against current week, full Mealie recipe with scaled ingredients + instructions, split across 2 messages if long, inline button disambiguation). Scope limited to current week; global `/recipepool` search is a logged future item. LLM-woven ingredient-in-instructions format also logged as Phase 2 future item.
+- 🗂️ **Infrastructure 12 spec: Unraid Docker Display (Xvfb)** — `apt-get install xvfb`, `docker/entrypoint.sh` starts `Xvfb :99` before main process, `DISPLAY=:99` in compose env vars. Must be done before Docker deployment on Unraid. Local dev unchanged. Full verification steps documented.
+- ✓ **`recipelist` added to `cspell.json`** — spell-check word list updated.
 
 ### Added this session (eighteenth)
 - ✓ **Previous Purchases live `build-cart --force` verified** — 66 cards found via `li.product-grid-cell`; 3/24 items matched from Previous Purchases (chicken thighs 75%, lemons 100%, parmesan 67%); 21 via search. $102.86 total, 0 flagged. PP optimization is fully verified end-to-end. Note: word-overlap matcher doesn't distinguish chicken cuts (thighs matched for "bone-in skin-on chicken breast") — known fuzzy-match limitation, not a bug.
@@ -342,11 +355,6 @@ If you're not sure what success looks like, **ask Bailey** — no assumptions.
 ### Completed in earlier sessions
 - ✅ `/add` multi-item LLM flow — `LlmItemParser`, preview/confirm/edit/cancel, cart rebuild on confirm (`lib/autochef/llm_item_parser.rb`, `lib/autochef/notify.rb`) (twelfth session)
 - ✅ Automap Telegram report reformatted — Grocery additions section (search_term + qty/unit) + Pantry skips (compact comma list) (twelfth session)
-
-### Infrastructure (after stable local operation)
-11. Docker deployment on Unraid
-12. Uptime Kuma push monitor
-13. MCP setup
 
 ---
 

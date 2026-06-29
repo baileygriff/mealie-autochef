@@ -4,6 +4,18 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-06-28 (nineteenth session)
+
+**Feature planning and spec session — no code written**
+Three new feature specs written via structured interview with Bailey. No bugs fixed, no code changed, no tests run this session.
+
+- **Feature 7 respec (Cart Review, Auto-Fix + /cart-correction)** — Fully replaces old LLM Cart Review spec. See `future_enhancements.md § 7` for full spec. Key decisions: programmatic + LLM combined (Claude Sonnet vision), auto-fix happy cases once before notification (fail fast → review table), `/cart-correction` batches corrections → updates `product_map` (permanent) → build-cart --force → fresh table.
+- **Feature 11 new spec (Recipe Telegram Commands)** — `/recipelist` + `/recipe` commands. Current week's plan only; inline button disambiguation; Mealie recipe fetched on demand; ingredients scaled to plan servings; messages split if > 3500 chars.
+- **Infrastructure 12 new spec (Unraid Xvfb)** — `apt-get install xvfb` in Dockerfile; `docker/entrypoint.sh` starts `Xvfb :99`; `DISPLAY=:99` in compose env. Required before Docker deployment.
+- **`cspell.json`** — added `recipelist`, `recipepool`.
+
+---
+
 ## Known Issues (not yet fixed)
 
 No open issues. For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).

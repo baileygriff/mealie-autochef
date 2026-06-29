@@ -1101,38 +1101,242 @@ Replaces the manual `seed_product_map.rb` interactive flow. Claude Haiku suggest
 
 ---
 
-### 7. LLM Cart Review
+### 7. Cart Review, Auto-Fix + /cart-correction
 
-After every `build-cart` run, the LLM reviews the cart via screenshot + Claude vision, compares against the original shopping list, identifies issues, and auto-applies corrections via Playwright before the cart-ready message is sent.
+> **Supersedes** the previous Feature 7 (LLM Cart Review). The core idea is preserved — LLM + screenshot — but this version adds a structured review table sent with the cart-ready message, a one-attempt auto-fix for clear mistakes before notification, and a `/cart-correction` command for human-directed corrections that batch into a full cart rebuild.
 
-**Trigger:** Always runs automatically after `cart.py` completes. Runs before the Telegram notification is sent.
+---
 
-**Data format:** Screenshot of the final cart view (same screenshot already captured by cart.py). Intermediate review screenshots are deleted after the review completes — only the final summary screenshot is kept and sent to Telegram.
+#### Overview of the full flow
 
-**What the LLM checks:**
-- Wrong product for the recipe need (e.g. "imitation lemon juice" when recipe needs a fresh lemon)
-- Quantities that are off for the serving size (e.g. 2.5lb salmon when plan calls for 1 serving)
-- Missing items visible in the shopping list but not in the cart
-- Consolidation/rationalization issues (the "2 squeezes of lemon → 1 lemon" category)
+1. `cart.py` builds the cart and returns per-item results (new `items_added` field — see schema below)
+2. `main.rb` calls `LlmCartReviewer` with the per-item results + screenshot
+3. LLM auto-fixes "happy cases" (one attempt — clear wrong product, wrong variant, obvious bad substitute): calls a targeted cart.py correction session to remove + re-add
+4. LLM categorizes all items into the review table
+5. Cart-ready Telegram message includes the full review table (see format below)
+6. Bailey reviews and sends `/cart-correction` for anything the LLM missed or got wrong
+7. Corrections batch in `@pending_states`, user confirms with a button
+8. Confirmed corrections update product_map for those items (permanent improvement), then trigger `build-cart --force`
+9. After rebuild, a fresh review table and screenshot are sent
 
-**Correction flow:**
-1. LLM receives the cart screenshot + original `cart_items` list (search terms and intended qtys)
-2. LLM returns a correction plan: `[{action: "remove" | "add" | "adjust_qty", item: "...", reason: "..."}]`
-3. `cart_client.rb` passes the correction plan to `cart.py` via IPC (JSON, same pipe as normal cart build)
-4. `cart.py` executes corrections: remove item, re-search with corrected term, add correct item
-5. After corrections, `cart.py` takes a fresh final screenshot for the Telegram notification
+---
 
-**When LLM cannot correct:**
-- Product genuinely not available on Food Lion
-- LLM is uncertain and won't guess
-- → Adds a note to the Telegram cart-ready message: "⚠️ Salmon fillet: 2.4lb pack only — verify manually."
+#### cart.py output schema additions
+
+`cart.py` must return a new `items_added` array in its JSON output. Each entry covers one item that was attempted:
+
+```python
+{
+  "status": "cart_built",
+  # ... existing fields unchanged ...
+  "items_added": [
+    {
+      "search_term": "chicken thighs",           # Ruby-side search term from product_map
+      "product_name": "Food Lion Chicken Thighs Bone-In, 4 lbs",  # text from Food Lion page
+      "product_qty_description": "4 lbs",        # pack size as shown on product card
+      "recipe_qty_requested": "2 lbs",           # from input payload (see below)
+      "match_source": "previous_purchases",       # "previous_purchases" | "search"
+      "pp_score": 0.85,                          # only present when match_source == "previous_purchases"
+      "added": true                              # false if item could not be added
+    },
+    ...
+  ]
+}
+```
+
+To populate `recipe_qty_requested`, the Ruby-side payload to cart.py must be extended to include the original recipe quantity alongside each search term. This is already available from the shopping list — it's the scaled ingredient quantity from `build_and_push`.
+
+**cart.py input payload extension (per item):**
+```python
+{
+  "search_term": "chicken thighs",
+  "default_qty": 1,
+  "pack_unit": "pkg",
+  "recipe_qty_description": "2 lbs"   # new — human-readable recipe quantity for review
+}
+```
+
+---
+
+#### `lib/autochef/llm_cart_reviewer.rb` — new class
+
+Single responsibility: receives cart data + screenshot path, calls Claude vision API, returns a `CartReviewResult` struct.
+
+```ruby
+module Autochef
+  CartReviewResult = Struct.new(
+    :auto_corrected,    # Array<Hash> — items the LLM fixed before notification
+    :auto_fix_failed,   # Array<Hash> — items LLM tried to fix but couldn't (goes to low_confidence)
+    :low_confidence,    # Array<Hash> — items flagged for human review
+    :qty_discrepancies, # Array<Hash> — pack qty significantly off from recipe qty
+    :high_confidence,   # Array<Hash> — items LLM considers correct
+    :correction_attempts, # Integer — how many auto-fix attempts were made
+    keyword_init: true
+  )
+
+  class LlmCartReviewer
+    def initialize(cfg, llm: nil)
+      @cfg = cfg
+      @llm = llm || Llm::AnthropicProvider.new(model: cfg.llm.models&.cart_reviewer || cfg.llm.default_model)
+    end
+
+    # items_added: the items_added array from cart.py output
+    # screenshot_path: path to the final cart screenshot
+    # Returns CartReviewResult
+    def review(items_added:, screenshot_path:)
+      # Calls LLM with vision (screenshot) + items_added data
+      # LLM categorizes items and identifies auto-fix candidates
+      # Performs one auto-fix attempt per flagged "happy case"
+      # Returns CartReviewResult
+    end
+  end
+end
+```
+
+**LLM prompt context:**
+- System: "You are reviewing a grocery cart. Given the cart screenshot and the list of items that were searched and added, identify: (1) items where the wrong product was added (wrong variant, fake substitute, clearly off brand), (2) items where the pack quantity is significantly larger or smaller than the recipe needs, (3) items you're confident are correct. Return structured JSON."
+- User: screenshot (vision) + `items_added` JSON
+- Model: Claude Sonnet (vision capability needed)
+
+**Auto-fix — "happy cases" only (one attempt each):**
+
+The LLM tags each problem item with an `auto_fix_strategy`:
+- `"re_search"` — search term was likely fine, but the wrong result was selected; try re-searching with a more specific term
+- `"variant_change"` — right product category, wrong variant (e.g. skin-on vs. skinless); try re-searching with the variant in the term
+- `"substitute_rejected"` — clearly wrong product (e.g. imitation vs. real); try re-searching
+
+For each `auto_fix_strategy` item:
+1. Pass a targeted correction to cart.py: `{remove_product: "...", replace_search_term: "..."}`
+2. cart.py removes the item from the cart, searches for the replacement term, adds first result
+3. If add succeeds → item moves to `auto_corrected` in the review result
+4. If add fails → item moves to `auto_fix_failed` → surfaces in `low_confidence` section of review table
+5. **One attempt only — no retry loops**
+
+Items with `auto_fix_strategy: nil` (ambiguous, not clearly wrong, or uncertain) are never auto-fixed.
+
+---
+
+#### Review table format (Telegram Markdown)
+
+Sent as part of the cart-ready message:
+
+```
+*Cart ready ✅*
+
+Total: *$119.45*
+Pickup slot: Thu 5:00–6:00 PM
+
+[Open cart in Food Lion To Go](https://www.foodlion.com/shop)
+
+---
+
+*Ingredient Review*
+
+⚠️ *Needs your attention (2 items)*
+| Called For | Got |
+|---|---|
+| chicken thighs | Food Lion Bone-In Skin-On Chicken *Breast* |
+| 1 lemon | ReaLemon Lemon Juice (8 fl oz bottle) |
+
+📦 *Quantity notes (3 items)*
+| Called For | Got |
+|---|---|
+| 1/4 cup sugar | Domino Granulated Sugar, 5 lb bag |
+| 1 egg | Food Lion Large Eggs, 12-count |
+| 1 tbsp olive oil | Pompeian Smooth EVOO, 16 fl oz |
+
+✓ *Auto-corrected (1 item)*
+| Originally added | Replaced with |
+|---|---|
+| Dannon Greek Yogurt Vanilla | Dannon Plain Whole Milk Yogurt (32oz) |
+
+✓ *High confidence (18 items) — tap to expand_
+```
+
+Notes:
+- High confidence items are collapsed by default (listed in a separate follow-up message if the user asks, or via `/cart-detail`)
+- Pantry items already listed as a separate section (existing behavior)
+- `auto_fix_failed` items surface in "Needs your attention" with a note: "_(auto-fix attempted — see /cart-detail)_"
+
+---
+
+#### `/cart-correction` command
+
+```
+/cart-correction you picked chicken breasts but I want chicken thighs only or nothing
+/cart-correction get real lemons instead of the ReaLemon bottle
+```
+
+**Flow:**
+
+1. User sends `/cart-correction <free text>`
+2. LLM (`LlmItemParser`-style) parses into structured correction(s):
+   ```json
+   [
+     {
+       "current_product": "Food Lion Bone-In Skin-On Chicken Breast",
+       "action": "replace",
+       "replacement_search_term": "chicken thighs",
+       "or_nothing": true
+     }
+   ]
+   ```
+3. Bot shows a correction preview with [✅ Apply] [✏️ Edit] [➕ Add another] [🔄 Rebuild now] buttons
+4. User can batch multiple corrections before rebuilding
+5. On **Rebuild**: each correction updates the `ProductMap` entry for that `search_term` (permanent fix), then `build-cart --force` runs
+6. After rebuild: fresh cart-ready message with new review table and screenshot
+
+**Why update product_map permanently:**
+Corrections improve future builds. If chicken thighs was mapped to a bad search term, fixing it now prevents the same issue next week. If the correction is one-off (e.g. "this week I want thighs, normally breast is fine"), the user can note that in the free-text and the LLM will leave the product_map unchanged.
+
+**Pending state** (in `@pending_states[chat_id]`):
+```ruby
+{
+  action:      :waiting_cart_correction,
+  corrections: [{ current_product:, action:, replacement_search_term:, or_nothing:, update_product_map: }],
+  run_key:     "2026-06-30-1"
+}
+```
+
+---
+
+#### Migration order
+
+**Step 1 — cart.py output extension:**
+- Add `items_added` array to `run_build_cart()` return value
+- Track `product_name`, `product_qty_description` after each `add_item_to_cart()` call
+- Extend input payload schema to accept `recipe_qty_description` per item
+- Update `cart_client.rb` to pass `recipe_qty_description` from shopping list data
+- Verify: `build-cart --force` still works; `items_added` appears in JSON output
+
+**Step 2 — LlmCartReviewer (no auto-fix yet):**
+- Implement `review()` — LLM categorizes items into the four buckets
+- Add `send_cart_review_table` to `notify.rb`
+- Update `cmd_build_cart` in `main.rb` to call reviewer + send table
+- Verify: cart-ready message includes the review table; categories look reasonable
+
+**Step 3 — Auto-fix:**
+- Add auto-fix pass to `LlmCartReviewer.review()` — one targeted cart.py call per happy-case item
+- Add targeted correction mode to `cart.py` (remove + re-add without clearing full cart)
+- Update `auto_corrected` / `auto_fix_failed` sections of review table
+- Verify: at least one happy case gets auto-corrected end-to-end
+
+**Step 4 — `/cart-correction`:**
+- Add `cmd_cart_correction` handler to `notify.rb`
+- LLM parsing of correction text → structured correction
+- Preview + confirm flow (same pattern as `/add`)
+- Product_map update + `build-cart --force` trigger
+- Verify: send a test correction, rebuild fires, new review table arrives
+
+---
 
 **Key files:**
-- `lib/autochef/llm_cart_reviewer.rb` — new: calls Claude vision API, returns correction plan
-- `cart_builder/cart.py` — accept `--corrections` JSON argument; execute correction steps
-- `lib/autochef/cart_client.rb` — invoke cart.py twice if corrections exist (build pass, then correction pass)
-- `lib/autochef/notify.rb` — `send_cart_ready`: add `correction_notes:` kwarg
-- `main.rb` — `cmd_build_cart`: after cart.py returns, call `LlmCartReviewer.review`, pass corrections back
+- `cart_builder/cart.py` — extend `items_added` output; add targeted correction mode (remove + re-add without full cart clear)
+- `lib/autochef/cart_client.rb` — pass `recipe_qty_description` per item; accept targeted correction payload
+- `lib/autochef/llm_cart_reviewer.rb` — new: vision LLM call, categorization, auto-fix orchestration
+- `lib/autochef/notify.rb` — `send_cart_review_table`, `cmd_cart_correction`, correction pending state
+- `main.rb` — call `LlmCartReviewer.review` after `cmd_build_cart`; handle `/cart-correction` command
+- `config.yaml` — add `llm.models.cart_reviewer` (use Claude Sonnet for vision)
 
 ---
 
@@ -1302,23 +1506,222 @@ Why it fits: [rationale]
 
 ---
 
+### 11. Recipe Telegram Commands (`/recipelist`, `/recipe`)
+
+Let Bailey look up the week's meal plan and fetch full recipe details (ingredients + instructions) without leaving Telegram.
+
+---
+
+#### `/recipelist`
+
+Shows all cook days from the current approved week plan with recipe name and planned servings.
+
+```
+/recipelist
+```
+
+**Response format:**
+```
+*Week of Monday, June 30*
+
+Sun Jun 29: Greek Salmon with Rice Pilaf — 2 srv
+Mon Jun 30: Chicken Thigh Tacos — 4 srv
+Wed Jul 2: Sheet Pan Lemon Chicken — 4 srv
+Fri Jul 4: Baked Ziti — 4 srv
+```
+
+- Shows only cook days (days with assigned recipes); leftover days are omitted
+- Reads from the most recently approved `PlanHistory` record
+- No Mealie API call needed — all data is in the local DB
+
+---
+
+#### `/recipe`
+
+Fetch full recipe details for a specific planned meal.
+
+**By day (matches cook day in current week plan):**
+```
+/recipe Sunday
+/recipe Sun
+/recipe Sunday Dinner
+```
+
+**By fuzzy title (matched against current week's recipe names):**
+```
+/recipe salmon
+/recipe greek salad
+/recipe chicken tacos
+```
+
+**Disambiguation (when fuzzy match finds multiple candidates):**
+```
+Bot: Did you mean one of these?
+[Greek Salmon with Rice Pilaf]  [Miso Salmon Bowl]
+```
+Inline button tap → sends the recipe.
+
+---
+
+#### Recipe response format
+
+Telegram has a 4096 character limit per message. Long recipes (with many steps) are split across two messages:
+- Message 1: Recipe name + servings + full ingredients list (scaled to planned servings)
+- Message 2: Instructions
+
+**Example output (Message 1):**
+```
+*Greek Salmon with Rice Pilaf*
+_2 servings — Sunday, June 29_
+
+*Ingredients:*
+• 2 salmon fillets (6 oz each)
+• 1 cup long-grain white rice
+• 2 tbsp olive oil
+• 1 lemon, juiced
+• 2 cloves garlic, minced
+• 1 tsp dried oregano
+• Salt and pepper to taste
+• 2 cups chicken broth
+```
+
+**Example output (Message 2):**
+```
+*Instructions:*
+
+1. Preheat oven to 400°F.
+2. Cook rice in chicken broth per package directions.
+3. Mix olive oil, lemon juice, garlic, and oregano.
+...
+```
+
+**Ingredient scaling:** Plan servings ÷ Mealie recipe default servings × each ingredient quantity. Uses the same scaling logic as `ShoppingListBuilder`.
+
+**Phase 2 enhancement (future backlog):** LLM-formatted version where ingredient quantities are woven into the step-by-step instructions (e.g. "Mix 2 tbsp olive oil, juice of 1 lemon, 2 minced garlic cloves, and 1 tsp dried oregano"). Spec this separately when implementing.
+
+---
+
+#### Scope decisions
+
+- `/recipe` searches **current week's plan only** (not the full Mealie pool)
+- Future: `/recipepool <title>` — fuzzy search against all auto-plan tagged recipes in Mealie (separate backlog item)
+- Disambiguation uses inline buttons (consistent with existing approve/swap UX)
+
+---
+
+#### Data flow
+
+1. `cmd_recipelist` (or `cmd_recipe`): load latest approved `PlanHistory` from local DB
+2. Filter to cook days only
+3. For `/recipe` by day: match day abbreviation/name to plan entry (same logic as `find_date_for_day` in `notify.rb`)
+4. For `/recipe` by title: fuzzy-match recipe names in the plan using substring/word overlap
+5. Fetch full recipe from Mealie: `mealie_client.recipe(recipe_id)`
+6. Scale ingredients to plan servings
+7. Format and send (split if > ~3500 chars to leave room for Telegram overhead)
+
+---
+
+**Key files:**
+- `lib/autochef/notify.rb` — `cmd_recipelist`, `cmd_recipe`, disambiguation button callbacks
+- `lib/autochef/mealie_client.rb` — `recipe(id)` already exists; no changes needed
+- `main.rb` — register `/recipelist` and `/recipe` in `handle_message`
+- `cmd_help` update — add the two new commands to the help text
+
+---
+
 ## Infrastructure
 
-### 11. Docker Deployment on Unraid
+### 12. Unraid Docker Display (Xvfb)
 
-After stable local operation is confirmed.
+**Status:** Must be resolved before Docker deployment on Unraid. `headless=False` in `cart.py` is non-negotiable (Food Lion's bot-detection blocks headless browsers), but Docker on Unraid has no physical display. Xvfb provides a virtual framebuffer so Chrome runs "headed" inside the container.
+
+---
+
+#### What needs to change
+
+**`docker/Dockerfile` — install Xvfb:**
+```dockerfile
+RUN apt-get update && apt-get install -y \
+    xvfb \
+    && rm -rf /var/lib/apt/lists/*
+```
+(Add `xvfb` to the existing `apt-get install` block — don't create a separate RUN layer.)
+
+**`docker/entrypoint.sh` — new file:**
+```bash
+#!/bin/bash
+set -e
+
+# Start Xvfb virtual display on :99
+Xvfb :99 -screen 0 1280x1024x24 &
+XVFB_PID=$!
+export DISPLAY=:99
+
+# Give Xvfb a moment to be ready
+sleep 1
+
+# Hand off to the main process
+exec "$@"
+
+# Cleanup on exit (Xvfb will also die when the container stops — this is belt-and-suspenders)
+kill $XVFB_PID 2>/dev/null || true
+```
+
+**`docker/Dockerfile` — set entrypoint:**
+```dockerfile
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bundle", "exec", "ruby", "main.rb", "serve"]
+```
+
+**`docker/docker-compose.yml` — add display env var:**
+```yaml
+environment:
+  DISPLAY: ":99"
+```
+(Belt-and-suspenders alongside the entrypoint export. Some tools read `DISPLAY` from the environment directly.)
+
+---
+
+#### Local dev — no changes needed
+
+macOS sets `DISPLAY` automatically. `cart.py` runs headed on the local machine without Xvfb. The entrypoint script is only used inside Docker.
+
+---
+
+#### How to verify on Unraid
+
+1. Build and start the container: `docker compose up -d --build`
+2. Check Xvfb started: `docker exec mealie-autochef ps aux | grep Xvfb`
+3. Run a build-cart: `docker exec mealie-autochef bundle exec ruby main.rb build-cart --force`
+4. Expected: Chrome opens (virtually), cart builds, screenshot arrives in Telegram
+
+If Chrome fails to start: check `docker logs mealie-autochef` for "cannot open display" errors. Verify `DISPLAY=:99` is in the container environment with `docker exec mealie-autochef env | grep DISPLAY`.
+
+---
+
+**Key files:**
+- `docker/Dockerfile` — add `xvfb` to apt-get block; add `ENTRYPOINT` and `CMD`
+- `docker/entrypoint.sh` — new: start Xvfb, export DISPLAY, exec main process
+- `docker/docker-compose.yml` — add `DISPLAY: ":99"` to environment
+
+---
+
+### 13. Docker Deployment on Unraid
+
+After stable local operation is confirmed and Xvfb (section 12 above) is in place.
 
 Dockerfile and `docker-compose.yml` already exist in `docker/`. Key considerations:
 - `CART_BUILDER_PYTHON` in Docker will point to the venv Python inside the container
-- `headless=False` in `cart.py` requires a display (Xvfb) in Docker — needs `DISPLAY=:99` and `xvfb-run`
 - `playwright_state.json` must be volume-mounted (persists across container restarts)
 - Mealie URL switches from `http://192.168.1.64:3000` to `http://mealie:9000` on `mealie_net`
 - **TODO (test after deploy):** "⚙ Configure week" button URL uses `web.host` (192.168.1.64) — verify the link opens correctly from Telegram once the container is running on Unraid
 
-### 12. Uptime Kuma Push Monitor
+### 14. Uptime Kuma Push Monitor
 
 Bailey creates a Push monitor in Kuma at `192.168.1.64:3001`, pastes the push URL into `.env` as `UPTIME_KUMA_PUSH_URL`. `main.rb plan` already has a stub to POST to this URL after a successful run.
 
-### 13. MCP Setup
+### 15. MCP Setup
 
 Docker MCP server so Claude Code can manage containers directly. Deferred until Docker deployment is stable.
