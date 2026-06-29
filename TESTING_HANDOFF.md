@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (fifteenth session)
+## Current state as of 2026-06-28 (sixteenth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -126,9 +126,13 @@ mealie-autochef-ruby/
 | `spec/manual_addition_spec.rb` | ✓ | 6 examples; tests ManualAddition model, resolve logic, pending scope (50 total, 0 failures) |
 | Previous Purchases URL fix | ✓ | `PREV_PURCHASES_URL` corrected to `/past-purchases`; `SEL_MY_ITEMS_LINK` updated; tab click removed |
 | Session expiry detection (Option 1) | ✓ | `detect_session_state()` in `cart.py`; `session_expired` status; Telegram alert + inline rebuild button |
+| `detect_session_state` happy path | ✓ | Confirmed via live run: session valid, run continued normally; now logs "Session check: valid" |
+| `cart_builder/probe_pp.py` | ✓ | New diagnostic tool — navigates to Past Purchases, tries all selectors, dumps data-testid inventory; 30s, no cart ops |
+| PP horizontal carousel scroll | ✓ | `_collect_prev_purchase_items` now tries horizontal carousel scroll before vertical fallback |
+| Previous Purchases card selectors | 🔧 | `available=0` on first live run — page is a horizontal carousel; scroll fix applied; **next step: run `probe_pp.py`** |
 | CapSolver Kasada auto-solving (Option 2) | 🗂️ | Spec in future_enhancements.md; not yet implemented |
-| Previous Purchases card selectors | 🔧 | URL correct; `SEL_PREV_PRODUCT_CARD`/`SEL_PREV_PRODUCT_NAME` still unverified — `build-cart --force` after login refresh |
-| Modular Testability Refactor | 🗂️ | Planned in future_enhancements.md; not yet implemented |
+| Cart Builder Package Refactor | 🗂️ | Full spec in future_enhancements.md; 6-step Python package restructure + Ruby CartResolver/CartConsolidator |
+| Application Orchestrator Refactor | 🗂️ | Full spec in future_enhancements.md; 8-section Ruby refactor — one orchestrator per command, constructor injection, per-function LLM model config |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
@@ -225,7 +229,11 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **`last_planned` is set on approval, not on draft save** — this was a bug fixed 2026-06-28. Don't move it back. Drafts only update `times_planned`.
 
-**Past Purchases URL is confirmed** — Food Lion's past purchases page is at `https://www.foodlion.com/past-purchases` (confirmed 2026-06-28; `PREV_PURCHASES_URL` updated). There is no "My Items" tab — it's a direct page in the top nav under "Past Purchases". `SEL_PREV_PURCHASES_TAB` is now an empty list (no tab click needed). `SEL_PREV_PRODUCT_CARD` and `SEL_PREV_PRODUCT_NAME` are still best-guess Instacart DOM patterns — if the Previous Purchases pass reports 0 items found despite real past purchases being present, run `playwright codegen https://www.foodlion.com/past-purchases`, inspect the card container and name elements, and update those two constants. The feature falls back to full search if it finds 0 cards — existing behavior is never regressed.
+**Past Purchases URL is confirmed** — Food Lion's past purchases page is at `https://www.foodlion.com/past-purchases` (confirmed 2026-06-28; `PREV_PURCHASES_URL` updated). There is no "My Items" tab — it's a direct page in the top nav under "Past Purchases". `SEL_PREV_PURCHASES_TAB` is now an empty list (no tab click needed). `SEL_PREV_PRODUCT_CARD` and `SEL_PREV_PRODUCT_NAME` are still best-guess Instacart DOM patterns — if the Previous Purchases pass reports 0 items found despite real past purchases being present, **run `probe_pp.py` first** (see below), not a full `build-cart --force`. The feature falls back to full search if it finds 0 cards — existing behavior is never regressed.
+
+**Past Purchases page uses a horizontal carousel, not vertical scroll.** First live `build-cart --force` run confirmed `available=0` — the page arranges product cards side-by-side in a horizontally scrollable container. `_collect_prev_purchase_items` now runs JS to scroll carousel containers (`[data-testid*="carousel"]`, `[data-testid*="items-container"]`, `[class*="carousel"]`) horizontally before falling back to window vertical scroll. Card selectors still unverified against the live carousel DOM.
+
+**Use `probe_pp.py` for PP selector investigation, not `build-cart --force`.** `cart_builder/probe_pp.py` is a ~30-second targeted diagnostic: opens Chrome with saved auth, navigates to Past Purchases, reports all horizontally-scrollable containers, tries every card/name selector before and after scrolling, dumps the full `data-testid` inventory. Run it with `source .venv/bin/activate && python3 cart_builder/probe_pp.py` and paste the output to determine which selectors need updating. Only run `build-cart --force` after selectors are confirmed via the probe.
 
 **Food Lion sessions expire frequently — possibly within hours.** The Kasada bot-detection challenge (or actual cookie expiry) can trigger on any new build-cart run. `detect_session_state()` in `cart.py` now catches this early (immediately after `navigate_to_store`) and returns `"session_expired"` with `abort_reason: "kasada_challenge"` or `"login_required"` instead of crashing. `main.rb` sends a Telegram alert with a `[✅ Session Refreshed — Rebuild Cart]` inline button. To fix: run `source .venv/bin/activate && python3 cart_builder/cart.py --login`, solve the challenge, log in, complete 2FA, press Enter. Then tap the Telegram button to rebuild. See Option 2 (CapSolver) in `future_enhancements.md` for a fully automated path.
 
@@ -267,6 +275,7 @@ bundle exec ruby scripts/seed_product_map.rb
 | Plan generation (no Telegram) | `main.rb plan` then skip the approval wait |
 | Cart-building logic (no browser) | Spec the Ruby side (consolidation, resolve_cart_item, etc.) |
 | End-to-end cart build with browser | `main.rb build-cart --force` — only when Ruby side is already verified |
+| Previous Purchases selector investigation | `python3 cart_builder/probe_pp.py` (30s, no cart ops) — not `build-cart --force` |
 
 **Pre-define success and failure before running.** Before any test (especially a browser run), write down:
 - What output / log line / DB state counts as success
@@ -279,7 +288,7 @@ If you're not sure what success looks like, **ask Bailey** — no assumptions.
 
 **If you're stuck, facing a long-running task, or unsure how to proceed — stop and ask.** Don't grind through a 5-minute browser run hoping it'll reveal the problem. Don't make assumptions about what Bailey would want. A short question saves everyone time.
 
-**See [future_enhancements.md § Modular Testability Refactor](future_enhancements.md) for planned code changes that will make more of this codebase unit-testable without live dependencies.**
+**See [future_enhancements.md § Cart Builder Package Refactor](future_enhancements.md) and [§ Application Orchestrator Refactor](future_enhancements.md) for the two planned refactors that will make this codebase fully unit-testable without live dependencies.**
 
 ---
 
@@ -295,16 +304,24 @@ If you're not sure what success looks like, **ask Bailey** — no assumptions.
 9. Recipe Sleep feature
 10. LLM Recipe Suggestions (`/newrecipes`)
 
-### Added this session (fifteenth)
+### Added this session (sixteenth)
+- ✓ **`detect_session_state` happy path confirmed** — live `build-cart --force` run after session refresh: session was valid, run continued past step 1b normally. Added `log("  Session check: valid")` so the happy path is now visible in stderr.
+- ✓ **PP page is a horizontal carousel** — first live run returned `available=0`. Bailey confirmed the page side-scrolls. `_collect_prev_purchase_items` now executes JS to scroll carousel containers horizontally before falling back to vertical window scroll.
+- ✓ **`cart_builder/probe_pp.py`** — new 30-second diagnostic tool. Navigates to Past Purchases, reports all horizontally-scrollable containers, tries every card/name selector before and after horizontal scroll, dumps the full `data-testid` inventory. Use this for PP selector investigation — not `build-cart --force`.
+- ✓ **`testing_verifications.md` updated** — PP row now says to use `probe_pp.py` first; "Upcoming — Needs Verification" section updated to match.
+- 🗂️ **Cart Builder Package Refactor** — comprehensive spec in `future_enhancements.md`. Supersedes "Modular Testability Refactor". Coarse 5-method `GroceryProvider` ABC, `cart_builder/` Python package structure, `FixtureProvider` for tests, `--fixture` CLI flag, `README.md`. 6-step migration.
+- 🗂️ **Application Orchestrator Refactor** — comprehensive 8-section spec in `future_enhancements.md`. One orchestrator per `main.rb` command, constructor injection with defaults, per-function LLM model config (`cfg.llm.models.planner` etc.), `LlmProvider` abstraction, `Notifier` interface, `BotServer` extraction. `main.rb` ends up as a ~80-line router.
+
+### Added in fifteenth session
 - ✓ **Session expiry detection (Option 1)** — `detect_session_state()` in `cart.py` detects Kasada bot-detection challenges and login redirects immediately after `navigate_to_store()`. Returns `"session_expired"` status (clean exit, not crash) with `abort_reason` of `"kasada_challenge"` or `"login_required"`. `main.rb` routes to `send_session_expired_alert` which sends a context-aware Telegram message + `[✅ Session Refreshed — Rebuild Cart]` inline button. `callback_session_refresh` edits the message and spawns `build-cart --force` in a background thread.
 - 🗂️ **CapSolver Kasada auto-solving (Option 2)** — full spec in `future_enhancements.md`. Adds `solve_kasada_challenge()` to `cart.py`; auto-fires when `CAPSOLVER_API_KEY` set in `.env`; only handles `kasada_challenge` (not `login_required`); falls back to Option 1 alert on failure. Setup walkthrough included in spec.
 - ✓ **FlareSolverr ruled out** — already on Unraid but is Cloudflare-specific (CF_Clearance/Turnstile); has no Kasada support and cannot be used here.
 
 ### Added in fourteenth session
-- ✓ **Previous Purchases URL confirmed and fixed** — `PREV_PURCHASES_URL` corrected from `/shop/my_items` to `/past-purchases` (confirmed from live account screenshot). `SEL_MY_ITEMS_LINK` updated for "Past Purchases" nav link. `SEL_PREV_PURCHASES_TAB` emptied (no tab — direct page). URL check updated to accept `past-purchases`. **Card selectors still unverified** — run `build-cart --force` and check for PP pass item count > 0. If still 0, run `playwright codegen https://www.foodlion.com/past-purchases` and update `SEL_PREV_PRODUCT_CARD` / `SEL_PREV_PRODUCT_NAME`.
+- ✓ **Previous Purchases URL confirmed and fixed** — `PREV_PURCHASES_URL` corrected from `/shop/my_items` to `/past-purchases` (confirmed from live account screenshot). `SEL_MY_ITEMS_LINK` updated for "Past Purchases" nav link. `SEL_PREV_PURCHASES_TAB` emptied (no tab — direct page). URL check updated to accept `past-purchases`. **Card selectors still unverified** — run `probe_pp.py` to inspect live DOM.
 - ✓ **Testing practice standard** — new section in TESTING_HANDOFF; decision table (fastest loop per scenario), pre-define success/failure rule, prefer specs over live runs, ask-if-stuck rule.
 - ✓ **`spec/manual_addition_spec.rb`** — 6 examples: ManualAddition pending scope, resolve logic (ProductMap lookup + fallback), persistence invariant. 50 total, 0 failures.
-- 🗂️ **Modular Testability Refactor planned** — `CartResolver`, `CartConsolidator` extraction + cart.py `--fixture` mode. Spec in `future_enhancements.md`.
+- 🗂️ **Cart Builder Package Refactor planned** — full spec in `future_enhancements.md` (supersedes earlier "Modular Testability Refactor" stub).
 
 ### Added in thirteenth session
 - ✓ Previous Purchases cart optimization implemented (`add_from_previous_purchases`, word-overlap matching, graceful fallback, `previous_purchases_stats` in output)

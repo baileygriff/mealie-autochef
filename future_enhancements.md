@@ -18,7 +18,8 @@ Items 1–4 completed in the ninth session (2026-06-28). See [testing_feedback.m
 - 🔧 Previous Purchases cart optimization — `add_from_previous_purchases` in `cart_builder/cart.py`; tries Food Lion's "My Items / Previous Purchases" section before search, adds matched items by brand/variant, falls back gracefully to search for unmatched. `previous_purchases_stats` in output. **Needs live build-cart test (thirteenth session)**
 - ✅ Session Expiry Detection (Option 1) — `detect_session_state()` in `cart.py`; returns `"session_expired"` status to main.rb; Telegram alert with `[✅ Session Refreshed → Rebuild Cart]` inline button; `callback_session_refresh` spawns build-cart --force in background thread
 - 🗂️ CapSolver Kasada Auto-solving (Option 2) — see spec below
-- 🗂️ Modular Testability Refactor — see spec below
+- 🗂️ Cart Builder Package Refactor — see spec below (supersedes earlier "Modular Testability Refactor"; includes Ruby CartResolver/CartConsolidator + full Python provider abstraction)
+- 🗂️ Application Orchestrator Refactor — see spec below (one orchestrator per command, constructor-injected tools, per-function LLM model config, Notifier interface, BotServer extraction)
 
 ---
 
@@ -135,42 +136,904 @@ Option 2 only fires for `kasada_challenge`. If the reason is `login_required`, i
 
 ---
 
-### Modular Testability Refactor
+### Cart Builder Package Refactor
 
-**Goal:** Make as much of the codebase unit-testable without a live browser, Mealie instance, or Telegram credentials. Motivated by the testing practice standard added 2026-06-28 — Chrome runs are slow, Mealie calls require live connectivity, and most Ruby logic can be validated faster with in-memory specs.
+> **Supersedes** the earlier "Modular Testability Refactor" stub. The Ruby-side extractions (CartResolver, CartConsolidator) are preserved as Step 1 below; the Python-side refactor is now a full provider-abstraction redesign.
 
-**Current pain points:**
+**Goal:** Restructure `cart_builder/` into a proper Python package that separates provider-specific DOM code (Food Lion / Instacart) from the general cart-building workflow. Each layer is independently testable. Adding support for a second grocery store should require only writing a new provider class — not touching the workflow, the Ruby integration, or the CLI contract.
 
-| Problem | Impact |
+---
+
+#### Design decisions (fixed — don't revisit without good reason)
+
+| Decision | Rationale |
 |---|---|
-| `resolve_cart_item` is a standalone function in `main.rb` | Can't import it in specs without loading all of main.rb (config, Dotenv, etc.) |
-| Cart resolution logic (resolve → consolidate → send to cart.py) is inline in `cmd_build_cart` | Can't spec the resolution pass without mocking everything |
-| `cmd_build_cart` tightly couples config, DB, Mealie API, and cart logic | Hard to write a focused integration test |
-| `cart.py` has no non-browser testable path | No way to verify matching logic without launching Chrome |
+| Ruby/Python JSON contract is unchanged | `cart.py` still reads stdin, writes stdout. Ruby doesn't need to know about the internal restructure. |
+| Coarse provider interface (5 methods) | Easy to implement a new provider. Individual DOM steps (search, click-add) are private to the provider — only the workflow boundary matters. |
+| Provider owns the browser session | `Page`, `BrowserContext`, `Browser` are internal to the provider. The workflow never touches Playwright objects directly. |
+| `SessionExpiredError` crosses the boundary as an exception | Keeps method signatures clean — `navigate_to_store` either succeeds or raises. The workflow catches and converts to `session_expired` output. |
+| Provider-owned slot selection | `select_slot(pref)` is on the provider. Providers that don't have slot pickers return `None`. |
+| Previous Purchases is provider-internal | `add_items()` handles PP-first logic internally. Workflow just calls `add_items(items)` and gets back `(added, flagged)`. |
+| No Playwright types in `base.py` | The ABC is library-agnostic — a future provider could use Selenium or httpx without touching `base.py`. |
 
-**Proposed changes (implement in order, smallest first):**
+---
 
-1. **Extract `resolve_cart_item` to `lib/autochef/cart_resolver.rb`** — thin module/class wrapping the ProductMap lookup. Keeps the existing `main.rb` call-site as a one-liner delegation. Unlocks direct unit testing of the resolution logic (the biggest gap right now).
+#### Package structure (target state)
 
-2. **Extract cart-item consolidation (Enhancement 1 + 2) to `lib/autochef/cart_consolidator.rb`** — currently inline in `cmd_build_cart`. Makes the consolidation logic directly specable without any Mealie or DB dependency beyond ProductMap.
+```
+cart_builder/
+├── __init__.py
+├── cart.py               # CLI entrypoint — Ruby still calls 'python3 cart_builder/cart.py'
+├── base.py               # GroceryProvider ABC + CartItem/CartSummary dataclasses + SessionExpiredError
+├── workflow.py           # CartWorkflow — provider-agnostic orchestration
+├── providers/
+│   ├── __init__.py
+│   ├── food_lion.py      # FoodLionProvider — all Food Lion / Instacart DOM code
+│   └── fixture.py        # FixtureProvider — static data, no browser, for tests
+├── tests/
+│   ├── __init__.py
+│   ├── test_workflow.py  # tests CartWorkflow against FixtureProvider — no browser
+│   ├── test_food_lion.py # @pytest.mark.live — requires real Chrome + auth state
+│   └── fixtures/
+│       ├── sample_input.json
+│       └── sample_summary.json
+├── probe_pp.py           # diagnostic tool for PP selector investigation (already exists)
+└── README.md             # package docs: provider contract, how to add a provider, how to run tests
+```
 
-3. **Add a `--fixture` mode to `cart.py`** — accept `--fixture path/to/items.json` instead of stdin, skip browser entirely, print a mock output JSON with the same structure. Lets agents verify the Python JSON contract and output shape without launching Chrome.
+---
 
-**What stays as-is:**
-- Live `build-cart --force` runs for end-to-end browser validation (just less frequent — only when the above unit tests pass first)
-- Mealie API paths tested via `main.rb check` (fast enough, no browser)
+#### `base.py` — core types and provider contract
+
+```python
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class CartItem:
+    search_term: str
+    default_qty: int
+    pack_unit: Optional[str] = None
+
+
+@dataclass
+class CartSummary:
+    total: Optional[float]
+    item_count: int
+    pickup_slot: Optional[str]
+    flagged_items: list[str]
+    screenshot_path: Optional[str]
+    previous_purchases_stats: Optional[dict]  # None when not applicable
+
+
+class SessionExpiredError(Exception):
+    """Raised by navigate_to_store() when the saved session is invalid."""
+    def __init__(self, reason: str):
+        self.reason = reason  # "kasada_challenge" | "login_required"
+        super().__init__(reason)
+
+
+class GroceryProvider(ABC):
+    """
+    Abstract base for grocery store cart automation providers.
+
+    Each provider is responsible for:
+      - Maintaining its own browser/page state internally
+      - Implementing the 5 methods below
+      - Raising SessionExpiredError from navigate_to_store() if session is bad
+
+    The workflow (CartWorkflow) calls these methods in order and handles the
+    JSON output contract with the Ruby side. Providers never write to stdout.
+
+    To add a new grocery store:
+      1. Create cart_builder/providers/your_store.py
+      2. Subclass GroceryProvider and implement all 5 abstract methods
+      3. Register in cart.py's PROVIDER_MAP
+      See README.md for a full walkthrough.
+    """
+
+    @abstractmethod
+    def navigate_to_store(self, store_name: str) -> None:
+        """
+        Open the store and confirm the session is valid.
+        Raises SessionExpiredError if Kasada challenge or login redirect detected.
+        """
+
+    @abstractmethod
+    def clear_cart(self) -> int:
+        """Remove all items currently in the cart. Returns the count removed."""
+
+    @abstractmethod
+    def select_slot(self, pickup_window_pref: str) -> Optional[str]:
+        """
+        Configure the pickup or delivery slot.
+        Returns the confirmed slot string (e.g. 'Thu 5:00–6:00 PM') or None
+        if the store doesn't use slot selection or no matching slot was found.
+        """
+
+    @abstractmethod
+    def add_items(self, items: list[CartItem]) -> tuple[list[CartItem], list[str]]:
+        """
+        Add items to the cart. Providers may use any strategy (e.g. Previous
+        Purchases first, then search-based fallback).
+
+        Returns:
+          added:   CartItems successfully added to the cart
+          flagged: search_term strings for items that couldn't be added
+        """
+
+    @abstractmethod
+    def capture_summary(self, run_key: str) -> CartSummary:
+        """
+        Capture the final cart state: total, screenshot, slot, flagged items.
+        Providers that tracked previous_purchases_stats during add_items()
+        should surface them here.
+        """
+```
+
+---
+
+#### `workflow.py` — CartWorkflow
+
+Provider-agnostic. Never imports Playwright. Handles:
+- Calling provider methods in order
+- Catching `SessionExpiredError` → `session_expired` output
+- Spending cap check after summary
+- Building the final JSON output dict (same structure as today's `make_output()`)
+
+```python
+class CartWorkflow:
+    def __init__(self, provider: GroceryProvider):
+        self.provider = provider
+
+    def run(self, payload: dict) -> dict:
+        store_name       = payload.get("store_name", "")
+        pickup_pref      = payload.get("pickup_window_pref", "")
+        spending_cap     = payload.get("spending_cap_usd")
+        dry_run          = payload.get("dry_run", True)
+        run_key          = payload.get("run_key", "unknown")
+        raw_items        = payload.get("items", [])
+
+        if not raw_items:
+            return make_output("aborted", abort_reason="No items provided")
+
+        items = [CartItem(**i) for i in raw_items]
+
+        try:
+            self.provider.navigate_to_store(store_name)
+        except SessionExpiredError as e:
+            return make_output("session_expired", abort_reason=e.reason)
+
+        self.provider.clear_cart()
+        slot = self.provider.select_slot(pickup_pref)
+        added, flagged = self.provider.add_items(items)
+        summary = self.provider.capture_summary(run_key)
+
+        if spending_cap and summary.total and summary.total > spending_cap:
+            return make_output(
+                "aborted",
+                abort_reason=f"Cart total ${summary.total:.2f} exceeds cap ${spending_cap:.2f}",
+                flagged_items=flagged,
+            )
+
+        return make_output(
+            "cart_built",
+            est_total=summary.total,
+            cart_total=summary.total,
+            pickup_slot=summary.pickup_slot or slot,
+            flagged_items=flagged,
+            screenshot_path=summary.screenshot_path,
+            previous_purchases_stats=summary.previous_purchases_stats,
+        )
+```
+
+---
+
+#### `providers/food_lion.py` — FoodLionProvider
+
+All existing `cart.py` code moves here as class methods. Selector constants become class-level attributes. The internal helpers (`_navigate_to_previous_purchases`, `_collect_prev_purchase_items`, `_match_score`, etc.) stay as private methods.
+
+Key method mapping from existing functions:
+
+| Existing function(s) | FoodLionProvider method |
+|---|---|
+| `navigate_to_store()` + `detect_session_state()` + `dismiss_modals()` | `navigate_to_store()` — raises `SessionExpiredError` on bad session |
+| `clear_cart()` | `clear_cart()` |
+| `set_pickup_mode()` + `select_pickup_slot()` | `select_slot()` |
+| `add_from_previous_purchases()` + `add_item_to_cart()` loop | `add_items()` — PP pass first, search fallback |
+| `capture_cart_summary()` + screenshot | `capture_summary()` |
+
+The provider opens and closes its own `sync_playwright` context in `__init__` / `__del__` or via a context manager. A `with FoodLionProvider(...) as p:` pattern is clean and matches Playwright's own API.
+
+---
+
+#### `providers/fixture.py` — FixtureProvider
+
+No browser. Returns pre-canned data. Used exclusively by `test_workflow.py`.
+
+```python
+class FixtureProvider(GroceryProvider):
+    """Static provider for testing CartWorkflow without a browser."""
+
+    def navigate_to_store(self, store_name: str) -> None:
+        pass  # always succeeds
+
+    def clear_cart(self) -> int:
+        return 3  # pretend 3 items were cleared
+
+    def select_slot(self, pref: str) -> Optional[str]:
+        return "Thu 5:00–6:00 PM"
+
+    def add_items(self, items):
+        # All items succeed except any with search_term == "FLAGGED"
+        added   = [i for i in items if i.search_term != "FLAGGED"]
+        flagged = [i.search_term for i in items if i.search_term == "FLAGGED"]
+        return added, flagged
+
+    def capture_summary(self, run_key: str) -> CartSummary:
+        return CartSummary(
+            total=89.42,
+            item_count=5,
+            pickup_slot="Thu 5:00–6:00 PM",
+            flagged_items=[],
+            screenshot_path=None,
+            previous_purchases_stats={"available": 12, "matched": 3, "search_adds": 2},
+        )
+```
+
+A `SessionExpiredFixtureProvider` variant raises `SessionExpiredError("kasada_challenge")` from `navigate_to_store`, letting `test_workflow.py` verify the `session_expired` output path.
+
+---
+
+#### `cart.py` — CLI entrypoint (after refactor)
+
+Slim. Parses args, picks provider, wires to workflow, prints output.
+
+```python
+PROVIDER_MAP = {
+    "food_lion": FoodLionProvider,
+    # "kroger": KrogerProvider,  # future
+}
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--login",   action="store_true")
+    parser.add_argument("--fixture", metavar="FILE", help="Run against fixture JSON, no browser")
+    parser.add_argument("--provider", default="food_lion", choices=PROVIDER_MAP)
+    args = parser.parse_args()
+
+    if args.login:
+        run_login()
+        return
+
+    payload = json.load(sys.stdin)
+
+    if args.fixture:
+        provider = FixtureProvider.from_file(args.fixture)
+    else:
+        provider = PROVIDER_MAP[args.provider](auth_state_path=AUTH_STATE_PATH)
+
+    result = CartWorkflow(provider).run(payload)
+    print(json.dumps(result))
+```
+
+`--fixture` accepts a JSON file in the same shape as the stdin payload. Useful for verifying the JSON contract and workflow logic without Chrome.
+
+---
+
+#### `cart_builder/README.md` — package documentation
+
+Covers:
+- Package layout and what each file does
+- The `GroceryProvider` contract (copy from `base.py` docstring, with examples)
+- How to add a new grocery store provider (step-by-step: create file, subclass, implement 5 methods, register in `PROVIDER_MAP`)
+- How to run tests: `pytest cart_builder/tests/test_workflow.py` (no browser); `pytest -m live cart_builder/tests/` (requires auth state)
+- How to run probe tools: `python3 cart_builder/probe_pp.py`
+- The Ruby/Python JSON contract (input schema, output schema) — so a future provider author knows what the workflow expects in and what it must produce out
+
+---
+
+#### Test strategy
+
+| Test file | What it covers | Browser needed? |
+|---|---|---|
+| `cart_builder/tests/test_workflow.py` | CartWorkflow routing: session_expired, spending_cap abort, flagged items, successful cart_built | No — uses FixtureProvider |
+| `cart_builder/tests/test_workflow.py` | `SessionExpiredFixtureProvider` → confirms `session_expired` output shape | No |
+| `cart_builder/tests/test_food_lion.py` | `@pytest.mark.live` — FoodLionProvider.navigate_to_store, clear_cart, etc. against live site | Yes — run manually |
+
+Run workflow tests after any change to `workflow.py` or `base.py`:
+```bash
+source .venv/bin/activate && pytest cart_builder/tests/test_workflow.py -v
+```
+
+---
+
+#### Migration order (implement in this sequence)
+
+**Step 1 — Ruby side (independent, do first):**
+- Extract `resolve_cart_item` → `lib/autochef/cart_resolver.rb`
+- Extract Enhancement 1 + 2 consolidation → `lib/autochef/cart_consolidator.rb`
+- Delegate from `main.rb` (no behavior change)
+- Add `spec/cart_resolver_spec.rb`, `spec/cart_consolidator_spec.rb`
+
+**Step 2 — Python: create package skeleton:**
+- Add `cart_builder/__init__.py`
+- Create `base.py` with `CartItem`, `CartSummary`, `SessionExpiredError`, `GroceryProvider` ABC
+- Create `cart_builder/providers/__init__.py`
+- Create `cart_builder/tests/__init__.py` + fixture JSON files
+- No behavior change yet — `cart.py` still works as-is
+
+**Step 3 — Python: extract FoodLionProvider:**
+- Create `providers/food_lion.py` with `FoodLionProvider` class
+- Move all selector constants, helper functions, and the five workflow functions into class methods
+- Update `cart.py` to import and use `FoodLionProvider` — no behavior change
+- Verify: `bundle exec ruby main.rb build-cart --force` still works
+
+**Step 4 — Python: extract CartWorkflow:**
+- Create `workflow.py` with `CartWorkflow` class built from the body of `run_build_cart`
+- Update `cart.py` entrypoint to wire `FoodLionProvider` + `CartWorkflow`
+- Verify: `bundle exec ruby main.rb build-cart --force` still works
+
+**Step 5 — Python: FixtureProvider + tests + `--fixture` flag:**
+- Create `providers/fixture.py` with `FixtureProvider` and `SessionExpiredFixtureProvider`
+- Write `tests/test_workflow.py`
+- Add `--fixture` arg to `cart.py`
+- Run `pytest cart_builder/tests/test_workflow.py` — should pass with no browser
+
+**Step 6 — Documentation:**
+- Write `cart_builder/README.md`
+- Update `HANDOFF.md` to reflect the new package structure
+
+---
 
 **Key files to touch:**
+- `cart_builder/__init__.py` (new)
+- `cart_builder/base.py` (new)
+- `cart_builder/workflow.py` (new)
+- `cart_builder/providers/__init__.py` (new)
+- `cart_builder/providers/food_lion.py` (new — receives all current cart.py code)
+- `cart_builder/providers/fixture.py` (new)
+- `cart_builder/tests/` (new directory)
+- `cart_builder/cart.py` (slimmed to CLI entrypoint only)
+- `cart_builder/README.md` (new)
 - `lib/autochef/cart_resolver.rb` (new)
 - `lib/autochef/cart_consolidator.rb` (new)
-- `main.rb` — delegate to the new classes (no behavior change)
-- `cart_builder/cart.py` — add `--fixture` arg to `argparse`
+- `main.rb` — delegate to new Ruby classes
 - `spec/cart_resolver_spec.rb` (new)
 - `spec/cart_consolidator_spec.rb` (new)
 
 ---
 
-## New Features
+### Application Orchestrator Refactor
+
+Applies the same modularity and testability principles from the Cart Builder Package Refactor to the Ruby application layer. Each `main.rb` command becomes a dedicated orchestrator class that wires injectable tool classes together. Implemented one section at a time — run the full spec suite after each section before moving on.
+
+**Note:** Section 3 here (CartResolver + CartConsolidator) corresponds to Step 1 of the Cart Builder Package Refactor above. Implement them together.
+
+---
+
+#### Design decisions
+
+| Decision | Rationale |
+|---|---|
+| One orchestrator per command | Independently testable; `PlanOrchestratorSpec` never loads `CartOrchestrator` |
+| Constructor injection with defaults | Tests pass stubs; production uses defaults. No registry magic. |
+| Tools raise, orchestrators rescue | Each orchestrator defines one clear rescue boundary per command. Tools stay simple. |
+| LLM provider is per tool instance | Each LLM tool accepts an `llm:` kwarg. Orchestrators configure from `cfg.llm.models`. Different tools can use different models. |
+| Notifier is injectable | `NullNotifier`/`SpyNotifier` in specs; `TelegramNotifier` in production. No real API calls from tests. |
+| `main.rb` becomes a thin router | Load config + DB, pick orchestrator, call `run`. All logic moves out. |
+
+---
+
+#### Target directory structure (new files only)
+
+```
+lib/autochef/
+├── errors.rb                          # Section 1
+├── llm/
+│   ├── provider.rb                    # Section 2 — interface module
+│   ├── anthropic_provider.rb          # Section 2 — wraps Anthropic API
+│   ├── null_provider.rb               # Section 2 — used when llm.enabled: false
+│   └── stub_provider.rb               # Section 2 — canned responses for tests
+├── notifiers/
+│   ├── notifier.rb                    # Section 5 — interface module
+│   ├── telegram_notifier.rb           # Section 5 — extracted from notify.rb
+│   └── null_notifier.rb               # Section 5 — no-ops for tests
+├── bot_server.rb                      # Section 5 — polling loop + callbacks, from notify.rb
+├── orchestrators/
+│   ├── cart_orchestrator.rb           # Section 4
+│   ├── shop_orchestrator.rb           # Section 6
+│   ├── plan_orchestrator.rb           # Section 7
+│   └── feedback_orchestrator.rb       # Section 8
+├── cart_resolver.rb                   # Section 3 — extracted from main.rb
+└── cart_consolidator.rb               # Section 3 — extracted from main.rb
+
+spec/
+├── support/
+│   ├── spy_notifier.rb                # Section 5
+│   ├── stub_llm.rb                    # Section 2
+│   └── fixture_plan.rb                # Section 7
+├── cart_resolver_spec.rb              # Section 3
+├── cart_consolidator_spec.rb          # Section 3
+├── cart_orchestrator_spec.rb          # Section 4
+├── shop_orchestrator_spec.rb          # Section 6
+└── plan_orchestrator_spec.rb          # Section 7
+```
+
+---
+
+#### Between every section
+
+After completing each section and before starting the next:
+
+1. `bundle exec rspec` — must be green, same count or higher
+2. `bundle exec ruby main.rb check` — must return OK
+3. If the section touched a Telegram-dependent flow: run `main.rb serve`, verify bot starts cleanly
+4. No partial sections — if a section isn't green, finish it before touching anything else
+
+---
+
+#### Section 1 — Error taxonomy
+
+**Goal:** One canonical place for all application error types. Every subsequent section raises these instead of bare `StandardError` or string messages.
+
+```ruby
+# lib/autochef/errors.rb
+module Autochef
+  class Error < StandardError; end
+
+  class ConfigError   < Error; end    # already raised by config.rb — move require here
+  class LlmError      < Error; end    # raised by any LLM tool on API failure
+  class MealieError   < Error; end    # raised by mealie_client.rb on API failure
+  class PlanError     < Error; end    # raised by planner/scorer on logic failure
+  class ShopError     < Error; end
+  class FeedbackError < Error; end
+
+  class CartError     < Error; end
+  class SessionExpiredError < CartError
+    attr_reader :reason
+    def initialize(reason)
+      @reason = reason          # "kasada_challenge" | "login_required"
+      super("Cart session expired: #{reason}")
+    end
+  end
+  class SpendingCapError < CartError
+    attr_reader :total, :cap
+    def initialize(total:, cap:)
+      @total, @cap = total, cap
+      super("Cart total $#{total} exceeds cap $#{cap}")
+    end
+  end
+end
+```
+
+**Files:** `lib/autochef/errors.rb` (new). Update `config.rb` to `require_relative 'errors'` at the top.
+
+**Tests:** None for this section — error classes are plain structs. Raising specs come with the sections that use them.
+
+**Success:** `bundle exec rspec` green. `require 'autochef/errors'` works in isolation with no other requires.
+
+---
+
+#### Section 2 — LLM provider abstraction
+
+**Goal:** Extract all Anthropic API calls into a single class behind an interface. Each LLM tool accepts an `llm:` kwarg so tests can inject a stub with no API key needed.
+
+**`lib/autochef/llm/provider.rb` — interface:**
+```ruby
+module Autochef::Llm
+  module Provider
+    # Returns the response text string, or nil on failure.
+    # All implementations must respond to this signature.
+    def complete(system:, user:, max_tokens: 1024)
+      raise NotImplementedError
+    end
+  end
+end
+```
+
+**`lib/autochef/llm/anthropic_provider.rb`:**
+- Accepts `model:` at init
+- Wraps the existing `Anthropic::Messages.create` call pattern (currently duplicated across all 4 LLM tools)
+- Raises `Autochef::LlmError` on any API failure, wrapping the original exception
+
+**`lib/autochef/llm/null_provider.rb`:**
+- `complete(...)` returns `nil`
+- Used when `cfg.llm.enabled == false`
+
+**`lib/autochef/llm/stub_provider.rb` (also used in `spec/support/stub_llm.rb`):**
+- Initialized with a canned response string
+- `complete(...)` returns it unconditionally
+- Optional `strict: true` mode that records calls for assertion in specs
+
+**`config.yaml` schema addition:**
+```yaml
+llm:
+  enabled: true
+  default_model: "claude-haiku-4-5-20251001"
+  models:                                        # per-tool overrides
+    planner:         "claude-sonnet-4-6"         # complex arrangement reasoning
+    qty_consolidator: "claude-haiku-4-5-20251001" # simple arithmetic
+    recipe_mapper:   "claude-haiku-4-5-20251001"  # ingredient lookup
+    item_parser:     "claude-haiku-4-5-20251001"  # text parsing
+```
+
+**Each of the 4 LLM tools gains an `llm:` kwarg:**
+```ruby
+# before
+def initialize(cfg)
+  @client = Anthropic::Client.new(api_key: ENV['ANTHROPIC_API_KEY'])
+  @model  = cfg.llm.model || "claude-haiku-4-5-20251001"
+end
+
+# after
+def initialize(cfg, llm: nil)
+  @llm = llm || Autochef::Llm::AnthropicProvider.new(
+    model: cfg.llm.models&.planner || cfg.llm.default_model
+  )
+end
+```
+
+Internal API calls replaced with `@llm.complete(system: ..., user: ...)`. No logic change.
+
+**Files touched:**
+- `lib/autochef/llm/provider.rb`, `anthropic_provider.rb`, `null_provider.rb`, `stub_provider.rb` (all new)
+- `spec/support/stub_llm.rb` (new)
+- `config.yaml` — add `models:` block
+- `lib/autochef/config.rb` — parse `llm.models` into a struct
+- `lib/autochef/llm_planner.rb`, `llm_qty_consolidator.rb`, `llm_recipe_mapper.rb`, `llm_item_parser.rb` — add `llm:` kwarg
+
+**Tests:** Update any existing LLM tool specs to inject `StubProvider`. Add a `spec/llm_provider_spec.rb` that exercises `NullProvider` and `StubProvider` directly.
+
+**Success:** All specs green. No spec requires `ANTHROPIC_API_KEY` to pass.
+
+---
+
+#### Section 3 — CartResolver + CartConsolidator
+
+**(Also Step 1 of the Cart Builder Package Refactor — implement these together.)**
+
+**Goal:** Extract `resolve_cart_item` and the Enhancement 1+2 consolidation block from `main.rb` into two independently testable classes.
+
+**`lib/autochef/cart_resolver.rb`:**
+```ruby
+module Autochef
+  class CartResolver
+    # Resolves a Mealie shopping list item to a cart search term.
+    # Returns nil for __skip__ sentinels (pantry items).
+    # Raises CartError if the product_map table is empty.
+    def resolve(mealie_items)
+      # Returns array of { search_term:, default_qty:, pack_unit:, skipped: }
+    end
+  end
+end
+```
+
+**`lib/autochef/cart_consolidator.rb`:**
+```ruby
+module Autochef
+  class CartConsolidator
+    def initialize(llm: nil)
+      @llm = llm   # nil → skip LLM rationalization pass
+    end
+
+    # Enhancement 1: dedup by search_term, sum quantities.
+    # Enhancement 2: LLM rationalization of pack sizes (if @llm present).
+    # Returns { items: [...], log: [...] }
+    def consolidate(resolved_items)
+    end
+  end
+end
+```
+
+**`main.rb`:** The inline resolve+consolidate block in `cmd_build_cart` becomes:
+```ruby
+resolver     = Autochef::CartResolver.new
+consolidator = Autochef::CartConsolidator.new(llm: llm_provider)
+resolved     = resolver.resolve(mealie_items)
+consolidated = consolidator.consolidate(resolved.reject(&:skipped))
+```
+
+**Tests:**
+- `spec/cart_resolver_spec.rb` — ProductMap lookup hit, `__skip__` exclusion, missing entry behavior
+- `spec/cart_consolidator_spec.rb` — dedup + qty sum without LLM; rationalization with `StubProvider`
+
+**Files touched:** `lib/autochef/cart_resolver.rb`, `lib/autochef/cart_consolidator.rb` (new); `main.rb` (inline block replaced); `spec/cart_resolver_spec.rb`, `spec/cart_consolidator_spec.rb` (new).
+
+**Success:** Specs green. `main.rb build-cart --force` behavior unchanged.
+
+---
+
+#### Section 4 — CartOrchestrator
+
+**Goal:** Extract `cmd_build_cart` from `main.rb` into an orchestrator with a clear error-handling boundary. The first orchestrator to implement — use it to establish the pattern for Sections 6–8.
+
+```ruby
+# lib/autochef/orchestrators/cart_orchestrator.rb
+module Autochef
+  module Orchestrators
+    class CartOrchestrator
+      def initialize(cfg, db,
+                     resolver:     CartResolver.new,
+                     consolidator: CartConsolidator.new,
+                     cart_client:  CartClient.new(cfg),
+                     notifier:     nil)   # caller supplies notifier
+        @cfg, @db     = cfg, db
+        @resolver     = resolver
+        @consolidator = consolidator
+        @cart_client  = cart_client
+        @notifier     = notifier || Notifiers::TelegramNotifier.new(cfg)
+      end
+
+      def run(force: false)
+        items        = load_shopping_items
+        resolved     = @resolver.resolve(items)
+        cart_items   = resolved.reject { |i| i[:skipped] }
+        skipped      = resolved.select { |i| i[:skipped] }
+        consolidated = @consolidator.consolidate(cart_items)
+
+        result = @cart_client.build_cart(consolidated, force: force)
+
+        case result[:status]
+        when "cart_built"     then @notifier.send_cart_ready(result, skipped_items: skipped)
+        when "session_expired" then raise SessionExpiredError.new(result[:abort_reason])
+        when "aborted"        then @notifier.send_cart_aborted(result)
+        end
+
+      rescue SessionExpiredError => e
+        @notifier.send_session_expired_alert(e.reason)
+      rescue SpendingCapError => e
+        @notifier.send_cart_aborted({ abort_reason: e.message })
+      rescue => e
+        @notifier.send_crash_alert("build-cart", e)
+        raise
+      end
+
+      private
+
+      def load_shopping_items
+        # current Mealie fetch logic from cmd_build_cart
+      end
+    end
+  end
+end
+```
+
+**`main.rb`:** `cmd_build_cart` becomes:
+```ruby
+def cmd_build_cart(cfg, db, force: false)
+  Autochef::Orchestrators::CartOrchestrator.new(cfg, db).run(force: force)
+end
+```
+
+**Tests (`spec/cart_orchestrator_spec.rb`):**
+- `StubCartClient` returning `{ status: "cart_built", ... }` → verify notifier called with `send_cart_ready`
+- `StubCartClient` returning `{ status: "session_expired", abort_reason: "kasada_challenge" }` → verify `send_session_expired_alert` called
+- `StubCartClient` returning `{ status: "aborted" }` → verify `send_cart_aborted` called
+- `StubCartClient` raising an unexpected error → verify `send_crash_alert` called and error re-raised
+- All use `SpyNotifier` — no real Telegram calls
+
+**Files touched:** `lib/autochef/orchestrators/cart_orchestrator.rb` (new); `main.rb`; `spec/cart_orchestrator_spec.rb` (new).
+
+**Success:** Specs green. `main.rb build-cart --force` behavior unchanged.
+
+---
+
+#### Section 5 — Notifier abstraction
+
+**Goal:** Define a Notifier interface so orchestrators accept a `notifier:` kwarg. Introduce `NullNotifier` and `SpyNotifier` for specs. Split `notify.rb`'s polling loop into a separate `BotServer` class.
+
+This is the largest single-file change. `notify.rb` currently does three distinct jobs:
+
+| Concern | Moves to |
+|---|---|
+| Send methods (`send_draft`, `send_cart_ready`, `send_crash_alert`, etc.) | `lib/autochef/notifiers/telegram_notifier.rb` |
+| Polling loop + inline button dispatch | `lib/autochef/bot_server.rb` |
+| Interface definition (what callers expect) | `lib/autochef/notifiers/notifier.rb` |
+
+**`lib/autochef/notifiers/notifier.rb` — interface module:**
+```ruby
+module Autochef::Notifiers
+  module Notifier
+    # Every send_* method in TelegramNotifier must appear here.
+    # Implementations return nil — fire and forget.
+    def send_draft(history, note: nil)             = raise NotImplementedError
+    def send_cart_ready(result, skipped_items: []) = raise NotImplementedError
+    def send_cart_aborted(result)                  = raise NotImplementedError
+    def send_session_expired_alert(reason)         = raise NotImplementedError
+    def send_automap_report(result)                = raise NotImplementedError
+    def send_crash_alert(cmd, error)               = raise NotImplementedError
+    def send_shop_complete(plan)                   = raise NotImplementedError
+    # ... (full list mirrors all send_* in notify.rb)
+  end
+end
+```
+
+**`lib/autochef/notifiers/telegram_notifier.rb`:** Direct copy of all `send_*` methods from `notify.rb`. No behavior change.
+
+**`lib/autochef/notifiers/null_notifier.rb`:** All methods are `def method_name(*) = nil`.
+
+**`spec/support/spy_notifier.rb`:**
+```ruby
+class SpyNotifier
+  include Autochef::Notifiers::Notifier
+  attr_reader :calls
+
+  def initialize
+    @calls = Hash.new { |h, k| h[k] = [] }
+  end
+
+  def method_missing(name, *args, **kwargs)
+    @calls[name] << { args: args, kwargs: kwargs }
+    nil
+  end
+
+  def received?(method_name)
+    @calls.key?(method_name)
+  end
+end
+```
+
+**`lib/autochef/bot_server.rb`:** Extracts the `start_bot` polling loop, callback dispatch (`callback_approve`, `callback_swap`, `callback_session_refresh`, etc.), and `@pending_states` from `notify.rb`. Accepts a `notifier:` for sends.
+
+**`lib/autochef/notify.rb`:** During transition, kept as a thin shim:
+```ruby
+require_relative 'notifiers/telegram_notifier'
+# Backwards compat alias — remove once all callers updated
+Autochef::Notifier = Autochef::Notifiers::TelegramNotifier
+```
+Remove entirely once all orchestrators are updated.
+
+**Files touched:** 4 new files under `lib/autochef/notifiers/`; `lib/autochef/bot_server.rb` (new); `lib/autochef/notify.rb` (becomes shim, then deleted); `spec/support/spy_notifier.rb` (new); all orchestrators updated to accept `notifier:` kwarg.
+
+**Success:** Specs green. `main.rb serve` starts the Telegram bot and Sinatra form exactly as before.
+
+---
+
+#### Section 6 — ShopOrchestrator
+
+**Goal:** Extract `cmd_shop` and `cmd_automap` from `main.rb`.
+
+```ruby
+class ShopOrchestrator
+  def initialize(cfg, db,
+                 mealie:   MealieClient.new(cfg),
+                 shopping: Shopping.new(cfg),
+                 mapper:   LlmRecipeMapper.new(cfg, llm: ...),
+                 notifier: Notifiers::TelegramNotifier.new(cfg))
+  end
+
+  def run(plan_id: nil)
+    plan = load_approved_plan(plan_id)
+    @shopping.build_shopping_list_for(plan)
+    run_automap if @cfg.llm.enabled
+    @notifier.send_shop_complete(plan)
+  rescue MealieError => e
+    @notifier.send_crash_alert("shop", e)
+    raise
+  end
+
+  def run_automap
+    @mapper.map_unmapped
+    @notifier.send_automap_report(@mapper.last_result)
+  rescue LlmError => e
+    @notifier.send_crash_alert("automap", e)
+    raise
+  end
+end
+```
+
+**Tests (`spec/shop_orchestrator_spec.rb`):** Stub `MealieClient` and `LlmRecipeMapper`. Verify notifier receives the right send call for each path. No live Mealie connection.
+
+**Files touched:** `lib/autochef/orchestrators/shop_orchestrator.rb` (new); `main.rb`; `spec/shop_orchestrator_spec.rb` (new).
+
+**Success:** Specs green. `main.rb shop` and `main.rb automap` behavior unchanged.
+
+---
+
+#### Section 7 — PlanOrchestrator
+
+**Goal:** Extract `cmd_plan` from `main.rb`. Most complex — Scorer, Planner, and LlmPlanner are all wired here, and the LLM model for planning is Sonnet (configured in `cfg.llm.models.planner`).
+
+```ruby
+class PlanOrchestrator
+  def initialize(cfg, db,
+                 scorer:      Scorer.new(cfg),
+                 planner:     Planner.new(cfg),
+                 llm_planner: LlmPlanner.new(cfg, llm: Llm::AnthropicProvider.new(model: cfg.llm.models&.planner)),
+                 notifier:    Notifiers::TelegramNotifier.new(cfg))
+  end
+
+  def run(note: nil)
+    stats    = @scorer.score_all
+    draft    = @planner.build(stats, note: note)
+    refined  = @cfg.llm.enabled ? @llm_planner.refine(draft) : draft
+    history  = save_draft_plan(refined)
+    @notifier.send_draft(history, note: refined.llm_error)
+  rescue LlmError => e
+    @notifier.send_crash_alert("plan", e)
+    raise
+  rescue PlanError => e
+    @notifier.send_crash_alert("plan", e)
+    raise
+  end
+end
+```
+
+**Tests (`spec/plan_orchestrator_spec.rb`):** Stub `Scorer` (returns fixture stats array), stub `LlmPlanner` (via `StubProvider`), use `SpyNotifier`. Verify `send_draft` is called with the right history. Verify `send_crash_alert` is called when `LlmError` is raised.
+
+**Files touched:** `lib/autochef/orchestrators/plan_orchestrator.rb` (new); `main.rb`; `spec/plan_orchestrator_spec.rb` (new); `spec/support/fixture_plan.rb` (new — canned plan history for specs).
+
+**Success:** Specs green. `main.rb plan` generates a plan and sends Telegram draft as before.
+
+---
+
+#### Section 8 — FeedbackOrchestrator + main.rb slim-down
+
+**Goal:** Extract `cmd_feedback`. Then reduce `main.rb` to a pure router.
+
+`FeedbackOrchestrator` is simple — loads order history, runs feedback signals, updates recipe stats, notifies. No unusual error paths.
+
+**`main.rb` final form:**
+```ruby
+#!/usr/bin/env ruby
+require_relative 'lib/autochef'
+
+cfg = Autochef::Config.load!
+db  = Autochef::Database.connect!(cfg)
+
+case ARGV[0]
+when "plan"        then Autochef::Orchestrators::PlanOrchestrator.new(cfg, db).run
+when "shop"        then Autochef::Orchestrators::ShopOrchestrator.new(cfg, db).run
+when "automap"     then Autochef::Orchestrators::ShopOrchestrator.new(cfg, db).run_automap
+when "build-cart"  then Autochef::Orchestrators::CartOrchestrator.new(cfg, db).run(force: ARGV.include?("--force"))
+when "feedback"    then Autochef::Orchestrators::FeedbackOrchestrator.new(cfg, db).run
+when "serve"       then Autochef::BotServer.new(cfg, db).start
+when "check"       then run_check(cfg, db)      # small enough to stay in main.rb
+when "sync"        then run_sync(cfg, db)
+when "backup"      then run_backup(cfg, db)
+when "budget"      then run_budget(cfg, db)
+else puts "Unknown command: #{ARGV[0]}"; exit 1
+end
+```
+
+**Files touched:** `lib/autochef/orchestrators/feedback_orchestrator.rb` (new); `main.rb` (final slim-down).
+
+**Success:** Specs green. All `main.rb` commands work as before. `main.rb` is under ~80 lines.
+
+---
+
+#### New files summary
+
+```
+lib/autochef/errors.rb
+lib/autochef/llm/provider.rb
+lib/autochef/llm/anthropic_provider.rb
+lib/autochef/llm/null_provider.rb
+lib/autochef/llm/stub_provider.rb
+lib/autochef/notifiers/notifier.rb
+lib/autochef/notifiers/telegram_notifier.rb
+lib/autochef/notifiers/null_notifier.rb
+lib/autochef/bot_server.rb
+lib/autochef/cart_resolver.rb
+lib/autochef/cart_consolidator.rb
+lib/autochef/orchestrators/cart_orchestrator.rb
+lib/autochef/orchestrators/shop_orchestrator.rb
+lib/autochef/orchestrators/plan_orchestrator.rb
+lib/autochef/orchestrators/feedback_orchestrator.rb
+spec/support/spy_notifier.rb
+spec/support/stub_llm.rb
+spec/support/fixture_plan.rb
+spec/cart_resolver_spec.rb
+spec/cart_consolidator_spec.rb
+spec/cart_orchestrator_spec.rb
+spec/shop_orchestrator_spec.rb
+spec/plan_orchestrator_spec.rb
+```
+
+---
 
 ### 5. Debug Screenshots
 

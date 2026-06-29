@@ -603,6 +603,7 @@ def detect_session_state(page: Page) -> str:
     except Exception:
         pass
 
+    log("  Session check: valid")
     return "valid"
 
 
@@ -907,11 +908,46 @@ def _collect_prev_purchase_items(page: Page) -> list:
     """
     Scroll through the Previous Purchases page and return a list of
     {name: str, card_sel: str} for every visible product card.
+
+    Food Lion's Past Purchases uses a horizontal carousel layout — cards are
+    arranged side-by-side in a scrollable container, not stacked vertically.
+    We scroll carousel containers horizontally to reveal all cards, then fall
+    back to window vertical scroll for any lazy-loaded sections beneath.
     """
-    # Scroll down to trigger lazy-loaded items, then back to top
-    for _ in range(6):
+    # Horizontal scroll on carousel/overflow containers
+    carousel_js = """
+        () => {
+            const sels = [
+                '[data-testid*="carousel"]',
+                '[data-testid*="items-container"]',
+                '[data-testid*="scroll"]',
+                '[class*="carousel"]',
+            ];
+            for (const s of sels) {
+                document.querySelectorAll(s).forEach(el => {
+                    if (el.scrollWidth > el.clientWidth) {
+                        el.scrollLeft = el.scrollWidth;
+                    }
+                });
+            }
+        }
+    """
+    for _ in range(4):
+        page.evaluate(carousel_js)
+        pace(500)
+    # Reset to reveal everything from the start
+    page.evaluate("""
+        () => {
+            document.querySelectorAll('[data-testid*="carousel"],[data-testid*="items-container"],[class*="carousel"]')
+                .forEach(el => { el.scrollLeft = 0; });
+        }
+    """)
+    pace(500)
+
+    # Vertical scroll for any lazy-loaded sections below the carousel
+    for _ in range(3):
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        pace(600)
+        pace(500)
     page.evaluate("window.scrollTo(0, 0)")
     pace(500)
 

@@ -6,7 +6,7 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ## Known Issues (not yet fixed)
 
-None — all feedback items are cleared. See [future_enhancements.md](future_enhancements.md) for the new-features queue.
+**Previous Purchases card selectors unverified** — `add_from_previous_purchases` returned `available=0` on the first live run. The Past Purchases page uses a horizontal carousel; the prior vertical-only scroll missed all cards. Horizontal carousel scroll added in sixteenth session. **Next step: run `python3 cart_builder/probe_pp.py`** to identify the correct `SEL_PREV_PRODUCT_CARD` / `SEL_PREV_PRODUCT_NAME` selectors from the live DOM before doing another `build-cart --force`.
 
 For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
 
@@ -78,6 +78,34 @@ Run `bundle exec ruby scripts/seed_product_map.rb --list` to inspect all entries
 | easy-pan-roasted-pork-tenderloin-with-bourbon-soaked-figs-recipe | american | pork | quick | no |
 | lemon-pasta-with-salmon | mediterranean | seafood | quick | no |
 | fish-tacos-recipe | mexican | seafood | quick | no |
+
+---
+
+## Implemented / Fixed — 2026-06-28 (sixteenth session)
+
+**`detect_session_state` happy path confirmed + "valid" log added**
+Live `build-cart --force` after session refresh: session was valid, run continued normally. Added `log("  Session check: valid")` so the healthy path is now visible in stderr — previously it returned silently. Confirms Option 1 wiring is correct end-to-end.
+File: `cart_builder/cart.py`
+
+**Discovery: Past Purchases page uses horizontal carousel scroll**
+First live run of `add_from_previous_purchases` returned `available=0` — the page arranges product cards side-by-side in a horizontally scrollable container, not a vertically stacked list. The previous `window.scrollTo(0, scrollHeight)` loop missed all items. Fixed: `_collect_prev_purchase_items` now evaluates JS to scroll all carousel-like containers (`[data-testid*="carousel"]`, `[data-testid*="items-container"]`, `[class*="carousel"]`) horizontally before falling back to vertical scroll. Card selectors remain unverified — `probe_pp.py` is the next step.
+File: `cart_builder/cart.py`
+
+**New: `cart_builder/probe_pp.py` — PP selector diagnostic tool**
+Minimal standalone script: opens Chrome with saved auth, navigates to Past Purchases, reports all horizontally-scrollable containers, tries every card/name selector before and after horizontal scroll, dumps the full `data-testid` inventory. ~30 seconds, no cart operations. Run with `source .venv/bin/activate && python3 cart_builder/probe_pp.py`. Use this for PP selector investigation instead of a full `build-cart --force` run.
+File: `cart_builder/probe_pp.py` (new)
+
+**New: Cart Builder Package Refactor spec**
+Full spec added to `future_enhancements.md`. Supersedes the earlier "Modular Testability Refactor" stub. Defines a coarse 5-method `GroceryProvider` ABC, `cart_builder/` Python package structure (`base.py`, `workflow.py`, `providers/food_lion.py`, `providers/fixture.py`, `tests/`, `README.md`), `FixtureProvider` for no-browser testing, `--fixture` CLI flag, and a 6-step migration order.
+File: `future_enhancements.md`
+
+**New: Application Orchestrator Refactor spec**
+Full 8-section spec added to `future_enhancements.md`. One orchestrator per `main.rb` command (Cart, Shop, Plan, Feedback). Constructor injection with defaults. Per-function LLM model config (`cfg.llm.models.planner`, etc.) via new `AnthropicProvider`/`NullProvider`/`StubProvider` classes. `Notifier` interface with `TelegramNotifier` and `NullNotifier`. `BotServer` extracted from `notify.rb`. `main.rb` becomes a ~80-line router after all 8 sections complete.
+File: `future_enhancements.md`
+
+**Discipline correction: minimal representative testing**
+Bailey flagged that running a full `build-cart --force` to investigate PP selectors violated the minimal feedback loop standard. The correct loop for selector investigation is `probe_pp.py` (30s). `testing_verifications.md` updated to say so explicitly. The decision table in "Testing practice" section of TESTING_HANDOFF updated to include the PP probe row.
+Files: `testing_verifications.md`, `TESTING_HANDOFF.md`
 
 ---
 
