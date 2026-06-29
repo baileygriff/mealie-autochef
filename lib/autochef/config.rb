@@ -3,6 +3,7 @@
 require 'yaml'
 require 'dotenv'
 require 'active_model'
+require_relative 'errors'
 
 module Autochef
   # Loads and validates config.yaml + .env into a single Config object.
@@ -23,8 +24,6 @@ module Autochef
   REPO_ROOT = File.expand_path('../..', __dir__)
   DEFAULT_CONFIG_PATH = File.join(REPO_ROOT, 'config.yaml')
   DEFAULT_ENV_PATH = File.join(REPO_ROOT, '.env')
-
-  class ConfigError < StandardError; end
 
   # Base class: validates on init, raises ConfigError with all messages
   # joined (rather than ActiveModel's default of silently returning false

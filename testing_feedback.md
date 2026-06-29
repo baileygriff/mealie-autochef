@@ -6,7 +6,7 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ## Known Issues (not yet fixed)
 
-**Previous Purchases card selectors unverified** — `add_from_previous_purchases` returned `available=0` on the first live run. The Past Purchases page uses a horizontal carousel; the prior vertical-only scroll missed all cards. Horizontal carousel scroll added in sixteenth session. **Next step: run `python3 cart_builder/probe_pp.py`** to identify the correct `SEL_PREV_PRODUCT_CARD` / `SEL_PREV_PRODUCT_NAME` selectors from the live DOM before doing another `build-cart --force`.
+**Previous Purchases live run not yet done** — `SEL_PREV_PRODUCT_CARD` / `SEL_PREV_PRODUCT_NAME` confirmed via `probe_pp.py` (seventeenth session). 66 `li.product-grid-cell` cards, names via `[class*="product-tile_detail-title"]`. **Next step: `bundle exec ruby main.rb build-cart --force`** to confirm PP items are matched and added. Look for "Found 66 card(s)" + per-item match lines in stderr output.
 
 For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
 
@@ -78,6 +78,28 @@ Run `bundle exec ruby scripts/seed_product_map.rb --list` to inspect all entries
 | easy-pan-roasted-pork-tenderloin-with-bourbon-soaked-figs-recipe | american | pork | quick | no |
 | lemon-pasta-with-salmon | mediterranean | seafood | quick | no |
 | fish-tacos-recipe | mexican | seafood | quick | no |
+
+---
+
+## Implemented / Fixed — 2026-06-28 (seventeenth session)
+
+**PP selectors confirmed via `probe_pp.py`; `cart.py` updated**
+Food Lion's Past Purchases page uses the PDL (Peapod Digital Labs) component library — no `data-testid` attributes anywhere on the page. `probe_pp.py` confirmed:
+- **Card selector**: `li.product-grid-cell` — 66 individual product cards (not `.pdl-carousel_item` which is a group of 5 products)
+- **Name selector**: `[class*="product-tile_detail-title"]` (button with full product name; fallback `[class*="product-grid-cell_name-text"]`)
+- **Add button**: `button:has-text("Add to cart")` — already in `SEL_ADD_BTN`, no change needed
+- Name text includes price/size after `\n` (e.g. `"Food Lion Atlantic Salmon Family Pack Fresh\n$9.99 /lb"`); `_collect_prev_purchase_items` now strips at first `\n`
+- Carousel JS scroll updated to target `.pdl-carousel_slider` and `.pdl-carousel_container` explicitly
+- `probe_pp.py` updated with confirmed selectors as primary entries
+Files: `cart_builder/cart.py`, `cart_builder/probe_pp.py`
+
+**Application Orchestrator Refactor — Section 1: `errors.rb`**
+Created `lib/autochef/errors.rb` with unified error hierarchy: `Autochef::Error` base, `ConfigError`, `LlmError`, `MealieError`, `PlanError`, `ShopError`, `FeedbackError`, `CartError`, `SessionExpiredError` (with `reason` attr), `SpendingCapError` (with `total`/`cap` attrs). `ConfigError` moved here from `config.rb`. Added `require_relative 'errors'` to `config.rb`. Suite: 50/50 green.
+Files: `lib/autochef/errors.rb` (new), `lib/autochef/config.rb`
+
+**Cart Builder Package Refactor — Step 2: Python skeleton + `base.py`**
+Created `cart_builder/__init__.py`, `cart_builder/base.py` (GroceryProvider ABC, CartItem, CartSummary, SessionExpiredError), `cart_builder/providers/__init__.py`, `cart_builder/tests/__init__.py`, and fixture JSON files (`tests/fixtures/sample_input.json`, `tests/fixtures/sample_summary.json`). No behavior change — `cart.py` continues to work as-is. Verified: `from cart_builder.base import GroceryProvider` works; `cart.py` smoke test returns `aborted` for empty items as expected.
+Files: `cart_builder/__init__.py`, `cart_builder/base.py`, `cart_builder/providers/__init__.py`, `cart_builder/tests/__init__.py`, `cart_builder/tests/fixtures/` (new directory)
 
 ---
 

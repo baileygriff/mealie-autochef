@@ -1,0 +1,12 @@
+{
+  "store_name": "3415 Avent Ferry Rd, Raleigh, NC 27609",
+  "pickup_window_pref": "Thu 17:00-18:00",
+  "spending_cap_usd": 300,
+  "dry_run": true,
+  "run_key": "fixture-test",
+  "items": [
+    { "search_term": "chicken breast", "default_qty": 2, "pack_unit": null },
+    { "search_term": "salmon fillet",  "default_qty": 1, "pack_unit": null },
+    { "search_term": "FLAGGED",        "default_qty": 1, "pack_unit": null }
+  ]
+}

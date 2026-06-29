@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (sixteenth session)
+## Current state as of 2026-06-28 (seventeenth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -127,12 +127,14 @@ mealie-autochef-ruby/
 | Previous Purchases URL fix | ✓ | `PREV_PURCHASES_URL` corrected to `/past-purchases`; `SEL_MY_ITEMS_LINK` updated; tab click removed |
 | Session expiry detection (Option 1) | ✓ | `detect_session_state()` in `cart.py`; `session_expired` status; Telegram alert + inline rebuild button |
 | `detect_session_state` happy path | ✓ | Confirmed via live run: session valid, run continued normally; now logs "Session check: valid" |
-| `cart_builder/probe_pp.py` | ✓ | New diagnostic tool — navigates to Past Purchases, tries all selectors, dumps data-testid inventory; 30s, no cart ops |
-| PP horizontal carousel scroll | ✓ | `_collect_prev_purchase_items` now tries horizontal carousel scroll before vertical fallback |
-| Previous Purchases card selectors | 🔧 | `available=0` on first live run — page is a horizontal carousel; scroll fix applied; **next step: run `probe_pp.py`** |
+| `cart_builder/probe_pp.py` | ✓ | Diagnostic tool — navigates to Past Purchases, tries all selectors, dumps inventory; 30s, no cart ops |
+| PP horizontal carousel scroll | ✓ | `_collect_prev_purchase_items` scrolls `.pdl-carousel_slider` / `.pdl-carousel_container` |
+| Previous Purchases card selectors | ✓ | Confirmed via probe (seventeenth session): `li.product-grid-cell` (66 cards), `[class*="product-tile_detail-title"]`; live `build-cart --force` still needed to verify matching + add |
+| Application Orchestrator Refactor — Section 1 | ✓ | `lib/autochef/errors.rb` — unified error hierarchy; `ConfigError` moved here from config.rb; 50/50 specs green |
+| Cart Builder Package Refactor — Step 2 | ✓ | Python skeleton: `cart_builder/__init__.py`, `base.py` (GroceryProvider ABC + types), `providers/__init__.py`, `tests/__init__.py`, fixture JSON files |
 | CapSolver Kasada auto-solving (Option 2) | 🗂️ | Spec in future_enhancements.md; not yet implemented |
-| Cart Builder Package Refactor | 🗂️ | Full spec in future_enhancements.md; 6-step Python package restructure + Ruby CartResolver/CartConsolidator |
-| Application Orchestrator Refactor | 🗂️ | Full spec in future_enhancements.md; 8-section Ruby refactor — one orchestrator per command, constructor injection, per-function LLM model config |
+| Cart Builder Package Refactor — Steps 3–6 | 🗂️ | FoodLionProvider, CartWorkflow, FixtureProvider + tests, README |
+| Application Orchestrator Refactor — Sections 2–8 | 🗂️ | LLM provider abstraction, CartResolver/Consolidator, orchestrators, Notifier interface |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
@@ -304,7 +306,12 @@ If you're not sure what success looks like, **ask Bailey** — no assumptions.
 9. Recipe Sleep feature
 10. LLM Recipe Suggestions (`/newrecipes`)
 
-### Added this session (sixteenth)
+### Added this session (seventeenth)
+- ✓ **PP selectors confirmed via `probe_pp.py`** — Food Lion uses PDL (Peapod Digital Labs) components with no `data-testid` attributes. Probe found `li.product-grid-cell` (66 cards) as card selector and `[class*="product-tile_detail-title"]` as name selector. Name text stripped at first `\n` (PDL button embeds price suffix). Carousel JS scroll updated to target `.pdl-carousel_slider` explicitly. `probe_pp.py` updated with confirmed selectors as primary entries. **Next step: `build-cart --force` to verify matching + live add.**
+- ✓ **Application Orchestrator Refactor — Section 1 (`errors.rb`)** — `lib/autochef/errors.rb` created with unified error hierarchy: `Autochef::Error` base, `ConfigError`, `LlmError`, `MealieError`, `PlanError`, `ShopError`, `FeedbackError`, `CartError`, `SessionExpiredError` (with `reason` attr), `SpendingCapError` (with `total`/`cap` attrs). `ConfigError` removed from `config.rb`; `require_relative 'errors'` added. 50/50 specs green.
+- ✓ **Cart Builder Package Refactor — Step 2 (Python skeleton + `base.py`)** — `cart_builder/__init__.py`, `cart_builder/base.py` (`GroceryProvider` ABC, `CartItem`, `CartSummary`, `SessionExpiredError`), `cart_builder/providers/__init__.py`, `cart_builder/tests/__init__.py`, fixture JSON files. No behavior change. `cart.py` still works as-is.
+
+### Added in sixteenth session
 - ✓ **`detect_session_state` happy path confirmed** — live `build-cart --force` run after session refresh: session was valid, run continued past step 1b normally. Added `log("  Session check: valid")` so the happy path is now visible in stderr.
 - ✓ **PP page is a horizontal carousel** — first live run returned `available=0`. Bailey confirmed the page side-scrolls. `_collect_prev_purchase_items` now executes JS to scroll carousel containers horizontally before falling back to vertical window scroll.
 - ✓ **`cart_builder/probe_pp.py`** — new 30-second diagnostic tool. Navigates to Past Purchases, reports all horizontally-scrollable containers, tries every card/name selector before and after horizontal scroll, dumps the full `data-testid` inventory. Use this for PP selector investigation — not `build-cart --force`.

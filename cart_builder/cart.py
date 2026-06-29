@@ -259,23 +259,22 @@ SEL_MY_ITEMS_LINK = [
 # No tab click is needed — kept as empty list so try_click is a harmless no-op.
 SEL_PREV_PURCHASES_TAB: list[str] = []
 
-# Product card containers on the Previous Purchases page
+# Product card containers on the Previous Purchases page.
+# Food Lion's Past Purchases page uses the PDL (Peapod Digital Labs) component
+# library — no data-testid attributes. Each li.product-grid-cell is one product.
+# 5 product groups (.pdl-carousel_item each containing a ul.product-list-quint)
+# are visible on page load; all 5 × ~13 = 66 li.product-grid-cell cards are
+# in the DOM immediately without requiring carousel scroll.
 SEL_PREV_PRODUCT_CARD = [
-    '[data-testid*="store-product"]',
-    '[data-testid*="product-card"]',
-    '[data-testid*="item-card"]',
-    'article[data-testid]',
+    'li.product-grid-cell',
 ]
 
-# Product name element within a Previous Purchases card
+# Product name element within a Previous Purchases card.
+# .product-tile_detail-title is a <button> containing the full product name.
+# .product-grid-cell_name-text is an <a> anchor with the same name (fallback).
 SEL_PREV_PRODUCT_NAME = [
-    '[data-testid*="item-name"]',
-    '[data-testid*="product-name"]',
-    '[data-testid="item_name"]',
-    'p[data-testid*="name"]',
-    'span[data-testid*="name"]',
-    'h2',
-    'h3',
+    '[class*="product-tile_detail-title"]',
+    '[class*="product-grid-cell_name-text"]',
 ]
 
 
@@ -914,21 +913,18 @@ def _collect_prev_purchase_items(page: Page) -> list:
     We scroll carousel containers horizontally to reveal all cards, then fall
     back to window vertical scroll for any lazy-loaded sections beneath.
     """
-    # Horizontal scroll on carousel/overflow containers
+    # Horizontal scroll on the PDL carousel containers to trigger lazy loading.
+    # After scrolling right, reset to 0 so all lazy-loaded cards are reachable.
     carousel_js = """
         () => {
-            const sels = [
-                '[data-testid*="carousel"]',
-                '[data-testid*="items-container"]',
-                '[data-testid*="scroll"]',
-                '[class*="carousel"]',
-            ];
-            for (const s of sels) {
-                document.querySelectorAll(s).forEach(el => {
-                    if (el.scrollWidth > el.clientWidth) {
-                        el.scrollLeft = el.scrollWidth;
+            var sels = ['.pdl-carousel_slider', '.pdl-carousel_container', '[class*="carousel"]'];
+            for (var i=0; i<sels.length; i++) {
+                var els = document.querySelectorAll(sels[i]);
+                for (var j=0; j<els.length; j++) {
+                    if (els[j].scrollWidth > els[j].clientWidth) {
+                        els[j].scrollLeft = els[j].scrollWidth;
                     }
-                });
+                }
             }
         }
     """
@@ -938,8 +934,10 @@ def _collect_prev_purchase_items(page: Page) -> list:
     # Reset to reveal everything from the start
     page.evaluate("""
         () => {
-            document.querySelectorAll('[data-testid*="carousel"],[data-testid*="items-container"],[class*="carousel"]')
-                .forEach(el => { el.scrollLeft = 0; });
+            var sels = ['.pdl-carousel_slider', '.pdl-carousel_container', '[class*="carousel"]'];
+            for (var i=0; i<sels.length; i++) {
+                document.querySelectorAll(sels[i]).forEach(function(el) { el.scrollLeft = 0; });
+            }
         }
     """)
     pace(500)
@@ -964,7 +962,9 @@ def _collect_prev_purchase_items(page: Page) -> list:
                 name = None
                 for name_sel in SEL_PREV_PRODUCT_NAME:
                     try:
-                        name = card.locator(name_sel).first.inner_text(timeout=800).strip()
+                        raw = card.locator(name_sel).first.inner_text(timeout=800).strip()
+                        # The PDL button includes price/size after a newline; strip it.
+                        name = raw.split("\n")[0].strip() if raw else None
                         if name:
                             break
                     except Exception:

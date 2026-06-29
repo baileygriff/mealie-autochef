@@ -1,0 +1,13 @@
+{
+  "status": "cart_built",
+  "est_total": 89.42,
+  "cart_total": 89.42,
+  "pickup_slot": "Thu 5:00-6:00 PM",
+  "flagged_items": ["FLAGGED"],
+  "screenshot_path": null,
+  "previous_purchases_stats": {
+    "available": 12,
+    "matched": 3,
+    "search_adds": 2
+  }
+}

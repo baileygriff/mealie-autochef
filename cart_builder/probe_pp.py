@@ -81,16 +81,19 @@ def main():
         log("")
 
         # ── Card selector probe ──────────────────────────────────────────────
+        # Food Lion uses PDL (Peapod Digital Labs) components — no data-testid.
+        # Confirmed selector as of 2026-06-28: li.product-grid-cell (66 cards).
         card_sels = [
+            'li.product-grid-cell',           # confirmed — PDL individual product card
+            '.pdl-carousel_item',             # group container (5 groups × ~13 cards each)
+            '[class*="product-grid-cell"]',
+            '[class*="product-cell"]',
+            'li[class*="tile"]',
+            # Legacy data-testid fallbacks (Instacart white-label patterns)
             '[data-testid*="store-product"]',
             '[data-testid*="product-card"]',
-            '[data-testid*="item-card"]',
             'article[data-testid]',
-            # Broader fallbacks
-            'article',
             'li[data-testid]',
-            '[data-testid*="product"]',
-            '[data-testid*="item"]',
         ]
 
         log("=== Card selector counts (before scroll) ===")
@@ -125,12 +128,13 @@ def main():
         log("")
 
         # ── Name selector probe on first hit ────────────────────────────────
+        # Confirmed selector as of 2026-06-28: [class*="product-tile_detail-title"]
+        # Note: inner_text includes price/size after \n — strip at first \n.
         name_sels = [
+            '[class*="product-tile_detail-title"]',  # confirmed — button with full name
+            '[class*="product-grid-cell_name-text"]',  # anchor fallback
             '[data-testid*="item-name"]',
             '[data-testid*="product-name"]',
-            '[data-testid="item_name"]',
-            'p[data-testid*="name"]',
-            'span[data-testid*="name"]',
             'h2',
             'h3',
             'p',

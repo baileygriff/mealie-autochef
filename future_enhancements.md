@@ -458,12 +458,12 @@ source .venv/bin/activate && pytest cart_builder/tests/test_workflow.py -v
 - Delegate from `main.rb` (no behavior change)
 - Add `spec/cart_resolver_spec.rb`, `spec/cart_consolidator_spec.rb`
 
-**Step 2 — Python: create package skeleton:**
-- Add `cart_builder/__init__.py`
-- Create `base.py` with `CartItem`, `CartSummary`, `SessionExpiredError`, `GroceryProvider` ABC
-- Create `cart_builder/providers/__init__.py`
-- Create `cart_builder/tests/__init__.py` + fixture JSON files
-- No behavior change yet — `cart.py` still works as-is
+**✅ Step 2 — Python: create package skeleton (seventeenth session):**
+- `cart_builder/__init__.py` created
+- `cart_builder/base.py` created — `CartItem`, `CartSummary`, `SessionExpiredError`, `GroceryProvider` ABC
+- `cart_builder/providers/__init__.py` created
+- `cart_builder/tests/__init__.py` + fixture JSON files created
+- No behavior change — `cart.py` still works as-is
 
 **Step 3 — Python: extract FoodLionProvider:**
 - Create `providers/food_lion.py` with `FoodLionProvider` class
@@ -614,6 +614,8 @@ end
 **Tests:** None for this section — error classes are plain structs. Raising specs come with the sections that use them.
 
 **Success:** `bundle exec rspec` green. `require 'autochef/errors'` works in isolation with no other requires.
+
+**✅ Completed seventeenth session (2026-06-28).** `lib/autochef/errors.rb` created; `ConfigError` removed from `config.rb`; `require_relative 'errors'` added. 50/50 specs green.
 
 ---
 

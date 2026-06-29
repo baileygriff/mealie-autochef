@@ -70,7 +70,7 @@ Updated at the end of each session alongside `testing_feedback.md`.
 | `set_pickup_mode` | ⏳ | Runs in flow; no explicit screenshot verification |
 | `add_item_to_cart` | ✅ | 24/24 items matched using `text='Add to cart'` selector | 2026-06-28 (9th) |
 | `capture_cart_summary` | ✅ | `cart_total`, `item_count` returned correctly; screenshot saved | 2026-06-28 (9th) |
-| `add_from_previous_purchases` | 🔧 | URL confirmed (`past-purchases`); 0 items returned on first live run — PP page uses horizontal carousel, not vertical scroll. Horizontal scroll fix + probe script added (sixteenth session). **Next step: run probe_pp.py, not build-cart --force** | 2026-07-02 |
+| `add_from_previous_purchases` | 🔧 | Selectors confirmed via `probe_pp.py` (seventeenth session). PDL component library — no data-testid. `SEL_PREV_PRODUCT_CARD = ['li.product-grid-cell']` (66 cards). `SEL_PREV_PRODUCT_NAME = ['[class*="product-tile_detail-title"]', ...]`. Name newline-stripped to remove price suffix. **Next step: live `build-cart --force` to verify PP items are matched and added.** | 2026-06-28 |
 | Out-of-stock / no-results handling | ⏳ | Code path exists (`flagged` list); never triggered on live runs |
 | Session expiry re-login | ❌ | `playwright_state.json` will eventually expire; re-login flow documented but not re-tested since 2026-06-28 |
 
@@ -149,7 +149,7 @@ These will need end-to-end testing after each feature lands:
 | Feature | When to test |
 |---|---|
 | Auto-map (`main.rb automap`, Feature 6) | ✅ Verified 2026-06-28 (12th session) |
-| Previous Purchases optimization | **Use `probe_pp.py` first** (30s, no cart ops): `source .venv/bin/activate && python3 cart_builder/probe_pp.py`. Paste output to confirm which `SEL_PREV_PRODUCT_CARD`/`SEL_PREV_PRODUCT_NAME` selectors hit. Only run `build-cart --force` after selectors confirmed in probe. |
+| Previous Purchases optimization | Selectors confirmed via probe (seventeenth session). Run `bundle exec ruby main.rb build-cart --force` and look for "Found 66 card(s) using: li.product-grid-cell" in stderr + PP match lines per item. |
 | LLM Cart Review (Feature 7) | After implementation — verify correction flow on a live cart |
 | LLM Aided Shopping (Feature 8) | After implementation — verify per-item screenshot + LLM selection |
 | Recipe Sleep (Feature 9) | After implementation — verify sleep/wake/reset bot buttons |

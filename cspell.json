@@ -52,7 +52,8 @@
     "kpsdk",
     "Kasada",
     "AntiKasadaTask",
-    "autosolving"
+    "autosolving",
+    "Peapod"
   ],
   "ignorePaths": [
     "data/**",
