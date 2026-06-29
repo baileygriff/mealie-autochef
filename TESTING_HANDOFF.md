@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (nineteenth session)
+## Current state as of 2026-06-29 (twentieth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -134,6 +134,7 @@ mealie-autochef-ruby/
 | Telegram screenshot photo send | ✓ | Fixed `File.open` → `Faraday::UploadIO.new(path, 'image/png')` in `notify.rb` |
 | Application Orchestrator Refactor — Section 1 | ✓ | `lib/autochef/errors.rb` — unified error hierarchy; `ConfigError` moved here from config.rb; 50/50 specs green |
 | Cart Builder Package Refactor — Step 2 | ✓ | Python skeleton: `cart_builder/__init__.py`, `base.py` (GroceryProvider ABC + types), `providers/__init__.py`, `tests/__init__.py`, fixture JSON files |
+| Feature 16 — Nutrition Goals & Macro-Aware Planning | 🗂️ | Spec in docs/features/feature_16_nutrition_goals.md |
 | CapSolver Kasada auto-solving (Option 2) | 🗂️ | Spec in future_enhancements.md; not yet implemented |
 | Cart Builder Package Refactor — Steps 3–6 | 🗂️ | FoodLionProvider, CartWorkflow, FixtureProvider + tests, README |
 | Application Orchestrator Refactor — Sections 2–8 | 🗂️ | LLM provider abstraction, CartResolver/Consolidator, orchestrators, Notifier interface |

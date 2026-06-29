@@ -3,6 +3,13 @@
 **Rule: address feedback and improvements first, then new features.**
 When asked "what's next," pick the next unchecked item from the Feedback section before moving to New Features.
 
+**Feature spec convention (Feature 16+):** Each new feature lives in its own file under
+`docs/features/feature_NN_name.md`. This file is the full spec during development; once built,
+it becomes the feature's living documentation (implementation steps removed, actual file paths
+and usage notes added). Entries in this file are short summaries with a link to the spec file.
+Existing feature specs (1–15) remain embedded here and can be migrated to individual files
+when they are next touched.
+
 ---
 
 ## Feedback / Improvements
@@ -1626,6 +1633,35 @@ _2 servings — Sunday, June 29_
 - `lib/autochef/mealie_client.rb` — `recipe(id)` already exists; no changes needed
 - `main.rb` — register `/recipelist` and `/recipe` in `handle_message`
 - `cmd_help` update — add the two new commands to the help text
+
+---
+
+### 16. Nutrition Goals & Macro-Aware Planning
+
+> **Full spec:** [docs/features/feature_16_nutrition_goals.md](docs/features/feature_16_nutrition_goals.md)
+
+Stores all 4 macros (calories, protein, carbs, fat) per recipe in the local DB — sourced from
+Mealie where available, LLM-estimated otherwise. Adds a 3-tier scoring redesign that replaces the
+current flat weighted sum (rating/tag_affinity in Tier 1, recency/swap in Tier 2, macros as a
+small bonus in Tier 3, each on a 0–10 dial). Telegram plan draft shows a `Cal X; P Xg; F Xg; C Xg`
+stat line per recipe with ⚠️ flags on any macro that could significantly throw off daily goals.
+Hooks into Feature 10 (`/newrecipes`) to include macro context in recipe suggestions.
+
+**Key files:** `lib/autochef/llm_nutrition_estimator.rb` (new),
+`scripts/backfill_macros.rb` (new), `lib/autochef/scoring.rb` (tiered rewrite),
+`lib/autochef/config.rb` (NutritionConfig + ScoringWeights structs),
+`lib/autochef/notify.rb` (macro stat line + flag logic), new DB migration.
+
+---
+
+### 17. Recipe Display Refactor
+
+> **Full spec:** TBD — to be specced when implementing. **Depends on Feature 16.**
+
+Roll out the compact recipe display format (`Cal X; P Xg; F Xg; C Xg` on a second line) consistently
+across all Telegram recipe-display contexts: plan approval and swap flow, `/recipe`, `/recipelist`
+(Feature 11), and any other message showing a recipe. Macro data must exist (Feature 16) before this
+is useful.
 
 ---
 

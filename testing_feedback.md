@@ -4,6 +4,30 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-06-29 (twentieth session)
+
+**Feature planning and spec session — no code written**
+Feature 16 fully specced via structured interview with Bailey. New `docs/features/` spec file
+convention established for Feature 16+. `/plan-remaining` command written for the next spec
+session. No bugs fixed, no code changed, no tests run this session.
+
+- **Feature 16 — Nutrition Goals & Macro-Aware Planning** — Full spec in
+  `docs/features/feature_16_nutrition_goals.md`. Covers: 4-macro storage in `recipe_stats`
+  (LLM-estimated via Haiku where Mealie data missing), 3-tier scorer redesign
+  (Rating+TagAffinity → Recency+Swap → Macros, 0–10 dials, order-of-magnitude multipliers),
+  per-macro ⚠️ flags in Telegram plan draft, `/newrecipes` macro context hook with
+  `--no-macros`/`--macros` override flags, `scripts/backfill_macros.rb` one-time backfill.
+- **Feature 17 — Recipe Display Refactor** — Stub entry added to `future_enhancements.md`.
+  Depends on Feature 16. Full spec TBD when implementing.
+- **Spec file convention** — Feature 16+ specs live in `docs/features/feature_NN_name.md`;
+  `future_enhancements.md` holds short summary + link only. Files become living documentation
+  once a feature is built (implementation steps removed, actual paths and usage notes added).
+- **`/plan-remaining` command** — `.claude/commands/plan-remaining.md` written with full
+  context for the next spec session (dietary preferences, web UI, multi-user support).
+- **`cspell.json`** — added `specced`, `tanh`, `kcal`, `backfill`, `macros`.
+
+---
+
 ## Implemented / Fixed — 2026-06-28 (nineteenth session)
 
 **Feature planning and spec session — no code written**

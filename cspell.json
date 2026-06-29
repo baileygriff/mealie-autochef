@@ -55,7 +55,12 @@
     "Kasada",
     "AntiKasadaTask",
     "autosolving",
-    "Peapod"
+    "Peapod",
+    "specced",
+    "tanh",
+    "kcal",
+    "backfill",
+    "macros"
   ],
   "ignorePaths": [
     "data/**",
