@@ -144,7 +144,7 @@ module Autochef
         begin
           bot_api.send_photo(
             chat_id: @chat_id,
-            photo:   File.open(result['screenshot_path'], 'rb'),
+            photo:   Faraday::UploadIO.new(result['screenshot_path'], 'image/png'),
             caption: "Cart — #{Time.now.strftime('%Y-%m-%d %H:%M')}"
           )
         rescue StandardError => e

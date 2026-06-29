@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-28 (seventeenth session)
+## Current state as of 2026-06-28 (eighteenth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -130,6 +130,8 @@ mealie-autochef-ruby/
 | `cart_builder/probe_pp.py` | ✓ | Diagnostic tool — navigates to Past Purchases, tries all selectors, dumps inventory; 30s, no cart ops |
 | PP horizontal carousel scroll | ✓ | `_collect_prev_purchase_items` scrolls `.pdl-carousel_slider` / `.pdl-carousel_container` |
 | Previous Purchases card selectors | ✓ | Confirmed via probe (seventeenth session): `li.product-grid-cell` (66 cards), `[class*="product-tile_detail-title"]`; live `build-cart --force` still needed to verify matching + add |
+| Previous Purchases live verification | ✓ | `build-cart --force` (eighteenth session): 66 cards found, 3/24 from PP, 21 via search; $102.86, 0 flagged |
+| Telegram screenshot photo send | ✓ | Fixed `File.open` → `Faraday::UploadIO.new(path, 'image/png')` in `notify.rb` |
 | Application Orchestrator Refactor — Section 1 | ✓ | `lib/autochef/errors.rb` — unified error hierarchy; `ConfigError` moved here from config.rb; 50/50 specs green |
 | Cart Builder Package Refactor — Step 2 | ✓ | Python skeleton: `cart_builder/__init__.py`, `base.py` (GroceryProvider ABC + types), `providers/__init__.py`, `tests/__init__.py`, fixture JSON files |
 | CapSolver Kasada auto-solving (Option 2) | 🗂️ | Spec in future_enhancements.md; not yet implemented |
@@ -306,8 +308,12 @@ If you're not sure what success looks like, **ask Bailey** — no assumptions.
 9. Recipe Sleep feature
 10. LLM Recipe Suggestions (`/newrecipes`)
 
-### Added this session (seventeenth)
-- ✓ **PP selectors confirmed via `probe_pp.py`** — Food Lion uses PDL (Peapod Digital Labs) components with no `data-testid` attributes. Probe found `li.product-grid-cell` (66 cards) as card selector and `[class*="product-tile_detail-title"]` as name selector. Name text stripped at first `\n` (PDL button embeds price suffix). Carousel JS scroll updated to target `.pdl-carousel_slider` explicitly. `probe_pp.py` updated with confirmed selectors as primary entries. **Next step: `build-cart --force` to verify matching + live add.**
+### Added this session (eighteenth)
+- ✓ **Previous Purchases live `build-cart --force` verified** — 66 cards found via `li.product-grid-cell`; 3/24 items matched from Previous Purchases (chicken thighs 75%, lemons 100%, parmesan 67%); 21 via search. $102.86 total, 0 flagged. PP optimization is fully verified end-to-end. Note: word-overlap matcher doesn't distinguish chicken cuts (thighs matched for "bone-in skin-on chicken breast") — known fuzzy-match limitation, not a bug.
+- ✓ **Bug fix: Telegram screenshot photo send** — `File.open(path, 'rb')` was passed raw to Faraday's multipart middleware, which couldn't encode it correctly; Telegram received a string and rejected it as an invalid file identifier. Fixed: `Faraday::UploadIO.new(path, 'image/png')` — the proper Faraday multipart type. `notify.rb` line 147.
+
+### Added in seventeenth session
+- ✓ **PP selectors confirmed via `probe_pp.py`** — Food Lion uses PDL (Peapod Digital Labs) components with no `data-testid` attributes. Probe found `li.product-grid-cell` (66 cards) as card selector and `[class*="product-tile_detail-title"]` as name selector. Name text stripped at first `\n` (PDL button embeds price suffix). Carousel JS scroll updated to target `.pdl-carousel_slider` explicitly. `probe_pp.py` updated with confirmed selectors as primary entries.
 - ✓ **Application Orchestrator Refactor — Section 1 (`errors.rb`)** — `lib/autochef/errors.rb` created with unified error hierarchy: `Autochef::Error` base, `ConfigError`, `LlmError`, `MealieError`, `PlanError`, `ShopError`, `FeedbackError`, `CartError`, `SessionExpiredError` (with `reason` attr), `SpendingCapError` (with `total`/`cap` attrs). `ConfigError` removed from `config.rb`; `require_relative 'errors'` added. 50/50 specs green.
 - ✓ **Cart Builder Package Refactor — Step 2 (Python skeleton + `base.py`)** — `cart_builder/__init__.py`, `cart_builder/base.py` (`GroceryProvider` ABC, `CartItem`, `CartSummary`, `SessionExpiredError`), `cart_builder/providers/__init__.py`, `cart_builder/tests/__init__.py`, fixture JSON files. No behavior change. `cart.py` still works as-is.
 

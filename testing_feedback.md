@@ -6,9 +6,7 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ## Known Issues (not yet fixed)
 
-**Previous Purchases live run not yet done** — `SEL_PREV_PRODUCT_CARD` / `SEL_PREV_PRODUCT_NAME` confirmed via `probe_pp.py` (seventeenth session). 66 `li.product-grid-cell` cards, names via `[class*="product-tile_detail-title"]`. **Next step: `bundle exec ruby main.rb build-cart --force`** to confirm PP items are matched and added. Look for "Found 66 card(s)" + per-item match lines in stderr output.
-
-For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
+No open issues. For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
 
 ---
 
@@ -78,6 +76,17 @@ Run `bundle exec ruby scripts/seed_product_map.rb --list` to inspect all entries
 | easy-pan-roasted-pork-tenderloin-with-bourbon-soaked-figs-recipe | american | pork | quick | no |
 | lemon-pasta-with-salmon | mediterranean | seafood | quick | no |
 | fish-tacos-recipe | mexican | seafood | quick | no |
+
+---
+
+## Implemented / Fixed — 2026-06-28 (eighteenth session)
+
+**Previous Purchases live `build-cart --force` verified**
+End-to-end run confirmed PP optimization is working. 66 cards loaded via `li.product-grid-cell` (carousel scroll working). 3/24 items matched from Previous Purchases (chicken thighs 75%, lemons 100%, parmesan 67%); 21 fell through to search — all added successfully. Cart: $102.86, 0 flagged. Note: word-overlap matcher scored "chicken breast bone-in skin-on" → "Food Lion Bone-In Skin-On Chicken Thighs" at 75% — cuts aren't distinguished, known fuzzy-match limitation.
+
+**Bug fix: Telegram screenshot photo send**
+`send_cart_ready` in `notify.rb` called `bot_api.send_photo(photo: File.open(path, 'rb'))`. Faraday's multipart middleware requires `Faraday::UploadIO`, not a raw `File` object — without it the IO was converted to a string and Telegram rejected it as an invalid remote file identifier (400 Bad Request). Fixed: `Faraday::UploadIO.new(result['screenshot_path'], 'image/png')`. `Faraday::UploadIO` is available after `require 'telegram/bot'` (pulled in transitively through `faraday-multipart`).
+File: `lib/autochef/notify.rb`
 
 ---
 
