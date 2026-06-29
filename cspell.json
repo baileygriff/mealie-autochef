@@ -60,7 +60,16 @@
     "tanh",
     "kcal",
     "backfill",
-    "macros"
+    "macros",
+    "killswitch",
+    "Xvfb",
+    "xvfb",
+    "Mermaid",
+    "mermaid",
+    "multiuser",
+    "setmeal",
+    "NlpCommand",
+    "nlp"
   ],
   "ignorePaths": [
     "data/**",

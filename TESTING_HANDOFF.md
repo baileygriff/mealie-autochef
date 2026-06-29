@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-29 (twentieth session)
+## Current state as of 2026-06-29 (twenty-first session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -134,10 +134,11 @@ mealie-autochef-ruby/
 | Telegram screenshot photo send | ✓ | Fixed `File.open` → `Faraday::UploadIO.new(path, 'image/png')` in `notify.rb` |
 | Application Orchestrator Refactor — Section 1 | ✓ | `lib/autochef/errors.rb` — unified error hierarchy; `ConfigError` moved here from config.rb; 50/50 specs green |
 | Cart Builder Package Refactor — Step 2 | ✓ | Python skeleton: `cart_builder/__init__.py`, `base.py` (GroceryProvider ABC + types), `providers/__init__.py`, `tests/__init__.py`, fixture JSON files |
-| Feature 16 — Nutrition Goals & Macro-Aware Planning | 🗂️ | Spec in docs/features/feature_16_nutrition_goals.md |
-| CapSolver Kasada auto-solving (Option 2) | 🗂️ | Spec in future_enhancements.md; not yet implemented |
-| Cart Builder Package Refactor — Steps 3–6 | 🗂️ | FoodLionProvider, CartWorkflow, FixtureProvider + tests, README |
-| Application Orchestrator Refactor — Sections 2–8 | 🗂️ | LLM provider abstraction, CartResolver/Consolidator, orchestrators, Notifier interface |
+| Feature 16 — Nutrition Goals & Macro-Aware Planning | 🗂️ | Spec in [docs/features/feature_16_nutrition_goals.md](docs/features/feature_16_nutrition_goals.md) |
+| CapSolver Kasada auto-solving (Option 2) | 🗂️ | Spec in [docs/features/improvement_capsolver.md](docs/features/improvement_capsolver.md) |
+| Cart Builder Package Refactor — Steps 3–6 | 🗂️ | Spec in [docs/features/improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
+| Application Orchestrator Refactor — Sections 2–8 | 🗂️ | Spec in [docs/features/improvement_orchestrator_refactor.md](docs/features/improvement_orchestrator_refactor.md) |
+| Feature backlog refactor + new features 21–24 | ✓ | All specs migrated to `docs/features/`; Features 21–24 + Doc 01 added as placeholders |
 | Docker deployment | **NOT YET** | After confirmed stable local operation |
 | Uptime Kuma push URL | **NOT YET** | Bailey needs to create Push monitor in Kuma |
 
@@ -302,19 +303,41 @@ If you're not sure what success looks like, **ask Bailey** — no assumptions.
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
 
 ### New features (feedback items 1–4 cleared in ninth session; Feature 6 verified in twelfth)
-5. Debug screenshots
+5. Debug screenshots — [spec](docs/features/improvement_debug_screenshots.md)
 6. ✅ LLM Assisted Recipe Mapping — verified twelfth session; bug fixed (product_map key mismatch)
-7. **Cart Review, Auto-Fix + /cart-correction** (supersedes old Feature 7 LLM Cart Review) — see spec in `future_enhancements.md § 7`
-8. LLM Aided Shopping (toggleable via Telegram, PreferenceNote model, skip+note on bad match)
-9. Recipe Sleep feature
-10. LLM Recipe Suggestions (`/newrecipes`)
-11. **Recipe Telegram Commands** (`/recipelist`, `/recipe`) — see spec in `future_enhancements.md § 11`
+7. **Cart Review, Auto-Fix + /cart-correction** — [spec](docs/features/feature_07_cart_review.md)
+8. LLM Aided Shopping — [spec](docs/features/feature_08_llm_aided_shopping.md)
+9. Recipe Sleep feature — [spec](docs/features/feature_09_recipe_sleep.md)
+10. LLM Recipe Suggestions (`/newrecipes`) — [spec](docs/features/feature_10_newrecipes.md)
+11. **Recipe Telegram Commands** (`/recipelist`, `/recipe`) — [spec](docs/features/feature_11_recipe_commands.md)
+16. Nutrition Goals & Macro-Aware Planning — [spec](docs/features/feature_16_nutrition_goals.md)
+17. Recipe Display Refactor (depends on F16) — [spec](docs/features/feature_17_recipe_display_refactor.md)
+18. Dietary Preferences in Recipe Searcher ❓ interview needed — [spec](docs/features/feature_18_dietary_preferences.md)
+19. Web UI ❓ interview needed — [spec](docs/features/feature_19_web_ui.md)
+20. Multi-user Support ❓ interview needed — [spec](docs/features/feature_20_multi_user.md)
+21. AI Spend Kill Switch ❓ interview needed — [spec](docs/features/feature_21_ai_spend_killswitch.md)
+22. `/set-meal` Manual Recipe Selection ❓ interview needed — [spec](docs/features/feature_22_set_meal.md)
+23. Telegram Command Audit & NLP Generalization ❓ interview needed — [spec](docs/features/feature_23_telegram_command_audit.md)
+24. Streamline Telegram User Flow ❓ interview needed — [spec](docs/features/feature_24_telegram_ux_flow.md)
+- Doc 01: Pipeline Documentation ❓ interview needed — [spec](docs/features/doc_01_pipeline_documentation.md)
 
 ### Infrastructure
-12. **Unraid Docker Display (Xvfb)** — must be done before Docker deploy; spec in `future_enhancements.md § 12`
-13. Docker Deployment on Unraid (depends on Xvfb being in place)
-14. Uptime Kuma push monitor
-15. MCP Setup
+12. **Unraid Docker Display (Xvfb)** — [spec](docs/features/infra_12_xvfb.md)
+13. Docker Deployment on Unraid (depends on Xvfb) — [spec](docs/features/infra_13_docker_deploy.md)
+14. Uptime Kuma push monitor — [spec](docs/features/infra_14_uptime_kuma.md)
+15. MCP Setup — [spec](docs/features/infra_15_mcp.md)
+
+### Added this session (twenty-first)
+- ✓ **Feature backlog fully migrated to `docs/features/`** — all inline specs extracted to individual files. `future_enhancements.md` is now a clean index table with links and status indicators (🗂️ = complete spec, ❓ = placeholder/interview needed).
+- 🗂️ **Features 21–24 added to backlog** with placeholder specs: AI Spend Kill Switch (21), `/set-meal` Manual Recipe Selection (22), Telegram Command Audit & NLP Generalization (23), Streamline Telegram User Flow (24). Each placeholder includes what Bailey described + open questions for the next spec interview.
+- 🗂️ **Doc 01 added**: Pipeline Documentation & Architecture Diagrams — placeholder spec with format/audience questions.
+- ✓ **`cspell.json` updated** — added `killswitch`, `Xvfb`, `xvfb`, `Mermaid`, `mermaid`, `multiuser`, `setmeal`, `NlpCommand`, `nlp`.
+- ✗ **Feature: Bundle Mealie into Docker** — evaluated and scrapped. Mealie and autochef stay as separate containers.
+
+### Added this session (twentieth)
+- 🗂️ **Feature 16 — Nutrition Goals & Macro-Aware Planning** — fully specced via deep interview. Spec in `docs/features/feature_16_nutrition_goals.md`. 4-macro storage in `recipe_stats`, 3-tier scorer redesign (0–10 dials, ×100/×10/×1 multipliers), per-macro ⚠️ flags in plan draft, `/newrecipes` macro context hook, `scripts/backfill_macros.rb`.
+- 🗂️ **Feature 17 stub** — Recipe Display Refactor. Depends on Feature 16.
+- ✓ **`/plan-remaining` skill written** — `.claude/commands/plan-remaining.md`.
 
 ### Added this session (nineteenth)
 - 🗂️ **Feature 7 spec revised: Cart Review, Auto-Fix + /cart-correction** — fully supersedes old Feature 7 (LLM Cart Review). New spec in `future_enhancements.md § 7`: per-item `items_added` output from cart.py, `LlmCartReviewer` (vision LLM), one-attempt auto-fix for clear wrong products/variants, structured review table in cart-ready message (Needs attention / Quantity notes / Auto-corrected / High confidence), `/cart-correction` natural language command → correction preview → product_map update → build-cart --force → fresh table.

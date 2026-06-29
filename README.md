@@ -350,12 +350,16 @@ mealie-autochef/
 ├── TESTING_HANDOFF.md            # agent briefing for test/feedback sessions
 ├── testing_feedback.md           # bug history and known issues
 ├── testing_verifications.md      # per-feature verification status (✅/❌/🔧)
-└── future_enhancements.md        # priority-ordered feature backlog
+└── future_enhancements.md        # feature backlog index (links to docs/features/)
 │
 ├── docs/
 │   ├── SETUP_WALKTHROUGH.md
 │   ├── USER_GUIDE.md
-│   └── DEVELOPER_GUIDE.md
+│   ├── DEVELOPER_GUIDE.md
+│   └── features/                 # one spec file per feature/improvement/infra item
+│       ├── feature_NN_name.md    # complete spec or ❓ placeholder with open questions
+│       ├── improvement_name.md
+│       └── infra_NN_name.md
 │
 └── docker/
     ├── Dockerfile

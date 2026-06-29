@@ -4,6 +4,25 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-06-29 (twenty-first session)
+
+**Feature backlog refactor + new specs — no code written**
+All inline specs extracted from `future_enhancements.md` into individual files under `docs/features/`.
+`future_enhancements.md` rewritten as a clean index table with links and status indicators.
+Features 21–24 and Doc 01 added as placeholder specs with known context and open interview questions.
+
+- **22 new spec files** created in `docs/features/`: improvements (capsolver, cart builder refactor,
+  orchestrator refactor, debug screenshots), features 7–11 (full specs extracted), features 17–24
+  (placeholders), Doc 01 (placeholder), and infra 12–15 (extracted).
+- **Features 21–24 added to backlog** from Bailey's notes: AI Spend Kill Switch, `/set-meal`
+  Manual Recipe Selection, Telegram Command Audit & NLP Generalization, Streamline Telegram User Flow.
+- **Doc 01 added**: Pipeline Documentation & Architecture Diagrams.
+- **Feature: Bundle Mealie in Docker — scrapped.** Evaluated and rejected; Mealie stays separate.
+- **`cspell.json`** — added `killswitch`, `Xvfb`, `xvfb`, `Mermaid`, `mermaid`, `multiuser`,
+  `setmeal`, `NlpCommand`, `nlp`.
+
+---
+
 ## Implemented / Fixed — 2026-06-29 (twentieth session)
 
 **Feature planning and spec session — no code written**
