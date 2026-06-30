@@ -11,6 +11,64 @@ a brief historical record.
 
 ---
 
+## Feature Priority
+
+**Last updated:** 2026-06-29 — re-sort this table whenever a feature is added or completed.
+
+**Adding a new feature:** place it in the appropriate tier immediately. Default to Tier 3 unless
+there is a clear argument for Tier 2 (high impact, no dependencies) or Tier 1 (small scope +
+operational blocker). Never add without assigning a tier.
+
+Per the feedback-first rule, all Feedback / Improvements items rank above New Features.
+Within Feedback, order follows the Pending table below. Within each tier, order is roughly
+impact × (1 / effort).
+
+### Tier 1 — Do Next
+
+All remaining Feedback / Improvements items. Complete these before any new features.
+
+| Item | Category | Why first |
+|---|---|---|
+| CapSolver Kasada Auto-solving | Feedback | ~30 lines; eliminates manual weekly session refresh |
+| Cart Builder Package Refactor (Steps 3–6) | Feedback | Enables browser-free Python tests; pre-req for FoodLionProvider isolation |
+| Orchestrator Refactor (Sections 2–8) | Feedback | Per-function LLM model config; injectable notifier; `main.rb` → thin router |
+| Debug Screenshots | Feedback | Low effort; completes the feedback backlog |
+
+### Tier 2 — New Features, Highest Impact
+
+Work through these after all Tier 1 items are done. Ordered by impact / effort.
+
+| Item | Category | Notes |
+|---|---|---|
+| Feature 9 — Recipe Sleep | Feature | Small DB migration; no dependencies; high day-to-day planner value |
+| Feature 11 — Recipe Telegram Commands | Feature | No dependencies; useful UX; moderate effort |
+| Feature 7 — Cart Review, Auto-Fix + `/cart-correction` | Feature | Highest-marked feature; requires `cart.py` `items_added` schema + LLM reviewer |
+| Feature 16 — Nutrition Goals & Macro-Aware Planning | Feature | Redesigns scorer; includes Haiku macro backfill script |
+| Feature 10 — LLM Recipe Suggestions (`/newrecipes`) | Feature | Grows the recipe pool; moderate effort |
+
+### Tier 3 — Later / Interview Needed / Infrastructure
+
+Lower priority, blocked on an interview, or deferred until a dependency is ready.
+
+| Item | Category | Notes |
+|---|---|---|
+| Feature 8 — LLM Aided Shopping | Feature | Improves product selection; no hard dependency |
+| Feature 17 — Recipe Display Refactor | Feature | Depends on Feature 16 |
+| Feature 22 — `/set-meal` Manual Recipe Selection | Feature | ❓ interview needed |
+| Feature 21 — AI Spend Kill Switch | Feature | ❓ interview needed |
+| Feature 24 — Streamline Telegram UX Flow | Feature | ❓ interview needed |
+| Feature 23 — Telegram Command Audit & NLP Generalization | Feature | ❓ interview needed |
+| Feature 20 — Multi-user Support | Feature | ❓ interview needed |
+| Feature 18 — Dietary Preferences in Recipe Searcher | Feature | ❓ interview needed |
+| Feature 19 — Web UI | Feature | ❓ interview needed |
+| Infra 12 — Unraid Xvfb | Infra | Required before Infra 13 |
+| Infra 13 — Docker Deploy on Unraid | Infra | Depends on Infra 12 |
+| Infra 14 — Uptime Kuma Push Monitor | Infra | Waiting on Bailey to create the monitor |
+| Infra 15 — MCP Setup | Infra | Deferred until Docker stable |
+| Doc 01 — Pipeline Documentation & Architecture Diagrams | Doc | ❓ interview needed |
+
+---
+
 ## Feedback / Improvements
 
 ### Completed

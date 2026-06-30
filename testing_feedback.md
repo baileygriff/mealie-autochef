@@ -4,6 +4,21 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-06-29 (twenty-second session)
+
+**Feature priority section added — planning only, no code written**
+Reviewed all pending TODOs across feedback/improvements, features, and infrastructure. Added a
+three-tier Feature Priority section to `future_enhancements.md`. Tier 1 covers all remaining
+Feedback/Improvements (CapSolver → Cart Builder Refactor → Orchestrator Refactor → Debug Screenshots).
+Tier 2 covers new features ordered by impact/effort (Recipe Sleep, Recipe Commands, Cart Review,
+Nutrition Goals, /newrecipes). Tier 3 covers interview-needed items and low-priority infrastructure.
+New rule added: any feature added to the backlog must be assigned a tier immediately (default Tier 3).
+
+- **Feature Priority section** — `future_enhancements.md` now has a three-tier priority table
+  as the first section after the intro rules, before the Feedback/Improvements list.
+
+---
+
 ## Implemented / Fixed — 2026-06-29 (twenty-first session)
 
 **Feature backlog refactor + new specs — no code written**

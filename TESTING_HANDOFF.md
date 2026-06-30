@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-29 (twenty-first session)
+## Current state as of 2026-06-29 (twenty-second session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -326,6 +326,9 @@ If you're not sure what success looks like, **ask Bailey** — no assumptions.
 13. Docker Deployment on Unraid (depends on Xvfb) — [spec](docs/features/infra_13_docker_deploy.md)
 14. Uptime Kuma push monitor — [spec](docs/features/infra_14_uptime_kuma.md)
 15. MCP Setup — [spec](docs/features/infra_15_mcp.md)
+
+### Added this session (twenty-second)
+- ✓ **Feature priority section added to `future_enhancements.md`** — reviewed all pending TODOs across feedback/improvements, features, and infrastructure. Added three-tier priority table: Tier 1 (all remaining Feedback/Improvements in order: CapSolver → Cart Builder Refactor → Orchestrator Refactor → Debug Screenshots), Tier 2 (new features ordered by impact/effort: Recipe Sleep → Recipe Commands → Cart Review → Nutrition Goals → /newrecipes), Tier 3 (interview-needed items + infrastructure). New feature rule baked in: any item added to backlog must be assigned a tier immediately; default is Tier 3. No code written, no specs changed, no tests run.
 
 ### Added this session (twenty-first)
 - ✓ **Feature backlog fully migrated to `docs/features/`** — all inline specs extracted to individual files. `future_enhancements.md` is now a clean index table with links and status indicators (🗂️ = complete spec, ❓ = placeholder/interview needed).
