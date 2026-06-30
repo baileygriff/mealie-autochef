@@ -87,7 +87,7 @@ Lower priority, blocked on an interview, or deferred until a dependency is ready
 
 | Item | Status | Spec |
 |---|---|---|
-| CapSolver Kasada Auto-solving (Option 2) | 🔧 Code implemented (twenty-third session) — blocked on Kasada detection timing bug; CapSolver never fires | [improvement_capsolver.md](docs/features/improvement_capsolver.md) |
+| CapSolver Kasada Auto-solving (Option 2) | 🔧 Code complete + detection timing fixed (twenty-fifth session) — blocked on proxy: tinyproxy on Unraid + router port-forward needed; see spec for full setup steps | [improvement_capsolver.md](docs/features/improvement_capsolver.md) |
 | Cart Builder Package Refactor | 🗂️ Complete spec (Step 2 done) | [improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
 | Application Orchestrator Refactor | 🗂️ Complete spec (Section 1 done) | [improvement_orchestrator_refactor.md](docs/features/improvement_orchestrator_refactor.md) |
 

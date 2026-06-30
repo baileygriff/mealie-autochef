@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-30 (twenty-fifth session)
+## Current state as of 2026-06-30 (twenty-sixth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -135,7 +135,7 @@ mealie-autochef-ruby/
 | Application Orchestrator Refactor — Section 1 | ✓ | `lib/autochef/errors.rb` — unified error hierarchy; `ConfigError` moved here from config.rb; 50/50 specs green |
 | Cart Builder Package Refactor — Step 2 | ✓ | Python skeleton: `cart_builder/__init__.py`, `base.py` (GroceryProvider ABC + types), `providers/__init__.py`, `tests/__init__.py`, fixture JSON files |
 | Feature 16 — Nutrition Goals & Macro-Aware Planning | 🗂️ | Spec in [docs/features/feature_16_nutrition_goals.md](docs/features/feature_16_nutrition_goals.md) |
-| CapSolver Kasada auto-solving (Option 2) | 🔧 | Detection now works; CapSolver fires but fails — `CAPSOLVER_PROXY` required (CapSolver routes request from proxy IP; without it: `InvalidRequestError`). Need proxy at Bailey's outgoing IP (70.131.45.67). |
+| CapSolver Kasada auto-solving (Option 2) | 🔧 | Detection + CapSolver task submission both confirmed working. Proxy setup documented: `docker/tinyproxy.conf` + compose service added. Blocked on Bailey: deploy tinyproxy, forward port 8888, set `CAPSOLVER_PROXY` in `.env`. See "Start here" in "What's coming next". |
 | Automated login flow (`--login`) | 🔧 | `run_login()` auto-fills credentials; timing fix applied (7s wait); blocked until proxy is set (CapSolver still needed to solve login Kasada) |
 | Debug screenshots | ✓ | Per-step screenshots in `data/cart_screenshots/<run_key>/`; rolling 2-run cleanup; `01_store_loaded.png` now captures page state at the Kasada detection point |
 | Cart Builder Package Refactor — Steps 3–6 | 🗂️ | Spec in [docs/features/improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
@@ -253,7 +253,7 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **`detect_session_state()` uses search bar visibility as the primary Kasada indicator (twenty-fifth session).** The Kasada slider challenge replaces the page content but `document.body.innerText` returns empty `''` (content hidden in shadow DOM or similar). The search bar visibility check (`page.locator(SEL_SEARCH[0]).is_visible()`) is what reliably catches all Kasada variants — if the search bar is gone after the wait, Kasada is active. Other checks (frame URLs, DOM attributes, title, body text, slider text) are tried first as faster paths. Detection now logs url, title, and body[:150] for debugging.
 
-**CapSolver `AntiKasadaTask` requires a proxy pointing to Bailey's outgoing IP.** CapSolver needs to make the Kasada-solving request from the same IP the browser uses (70.131.45.67 based on the challenge page). Without a proxy, the API returns `InvalidRequestError: unable to process task request`. Set `CAPSOLVER_PROXY` in `.env` to an HTTP/SOCKS5 proxy that routes through Bailey's outgoing IP. Options: run `tinyproxy` or `squid` on Unraid and port-forward, or use a commercial proxy at that IP. Until this is set, CapSolver falls back to Option 1 (Telegram alert for manual refresh).
+**CapSolver `AntiKasadaTask` requires a proxy pointing to Bailey's outgoing IP.** CapSolver needs to make the Kasada-solving request from the same IP the browser uses (70.131.45.67). Without a proxy, the API returns `InvalidRequestError: unable to process task request` — confirmed in live testing (twenty-sixth session). Full setup is documented in [docs/features/improvement_capsolver.md](docs/features/improvement_capsolver.md): tinyproxy as a Docker container on Unraid, router port-forward 8888 → 192.168.1.64:8888, `CAPSOLVER_PROXY=http://capsolver:PASSWORD@70.131.45.67:8888` in `.env`. When both containers are on the same Docker network, use container name as host: `http://capsolver:PASSWORD@autochef-tinyproxy:8888`. Until this is set, CapSolver falls back to Option 1 (Telegram alert for manual refresh).
 
 **`LlmRecipeMapper` uses numbered items + index echo** — items sent as `1. {note}`, `2. {note}`, ...  and the LLM must return `"index": N` in each response. The save loop uses `unmapped[index - 1]['note']` as the product_map key, NOT `s['ingredient_name']`. This ensures keys match what `resolve_cart_item` looks up (the full Mealie note). Do not revert to using `s['ingredient_name']` as the key — it strips quantity prefixes and breaks the lookup.
 
@@ -317,6 +317,27 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
 
+### ⚡ Start here — CapSolver proxy verification (twenty-sixth session left-off point)
+
+CapSolver is fully implemented and confirmed to fire correctly. The only remaining step is
+the proxy setup, which requires Bailey to do 4 things on Unraid before the agent can test:
+
+1. Set a real password in `docker/tinyproxy.conf` (replace `CHANGE_THIS_PASSWORD`)
+2. Deploy the tinyproxy Docker container on Unraid (`docker-compose up -d tinyproxy` from `docker/`)
+3. Forward port 8888 → 192.168.1.64:8888 in the router (same process as Mealie/Jellyfin)
+4. Add `CAPSOLVER_PROXY=http://capsolver:PASSWORD@70.131.45.67:8888` to `.env`
+
+**Once Bailey confirms those 4 steps are done**, the agent should:
+1. Verify proxy: `curl --proxy "http://capsolver:PASSWORD@70.131.45.67:8888" https://ifconfig.me` → must print `70.131.45.67`
+2. Run `bundle exec ruby main.rb build-cart --force 2>&1`
+3. Look for `CapSolver: challenge cleared successfully` in output
+4. If successful: update `improvement_capsolver.md` status to ✅, remove setup sections, note actual solve rate
+5. If proxy verification fails: check port-forward and container logs (`docker logs autochef-tinyproxy`)
+
+Full setup walkthrough and failure diagnostics: [docs/features/improvement_capsolver.md](docs/features/improvement_capsolver.md)
+
+---
+
 ### New features (feedback items 1–4 cleared in ninth session; Feature 6 verified in twelfth)
 5. ✅ Debug screenshots — implemented twenty-fourth session; [spec](docs/features/improvement_debug_screenshots.md)
 6. ✅ LLM Assisted Recipe Mapping — verified twelfth session; bug fixed (product_map key mismatch)
@@ -341,6 +362,13 @@ bundle exec ruby scripts/seed_product_map.rb
 13. Docker Deployment on Unraid (depends on Xvfb) — [spec](docs/features/infra_13_docker_deploy.md)
 14. Uptime Kuma push monitor — [spec](docs/features/infra_14_uptime_kuma.md)
 15. MCP Setup — [spec](docs/features/infra_15_mcp.md)
+
+### Added this session (twenty-sixth)
+- ✓ **CapSolver live test confirmed** — ran `build-cart --force`; Kasada detected correctly (timing fix verified); CapSolver fires and submits `AntiKasadaTask`; fails only with `InvalidRequestError: unable to process task request` (proxy missing, as expected). Option 1 fallback fires correctly.
+- ✓ **tinyproxy setup documented end-to-end** — `docker/tinyproxy.conf` created with BasicAuth placeholder; `tinyproxy` service added to `docker/docker-compose.yml` (`vimagick/tinyproxy`, port 8888); `CAPSOLVER_PROXY` added to `.env.example` with both local-dev and Docker-on-Unraid formats; `improvement_capsolver.md` fully rewritten (status, what's done, what's needed, 6-step Unraid setup walkthrough, success/failure diagnostics).
+- ✓ **Confirmed: CapSolver supports `AntiKasadaTask`** — not in public docs but present in their SDK; confirmed via research. The proxy requirement is real and the reason for `InvalidRequestError`.
+- ✓ **Confirmed: playwright-stealth does not stop Kasada** — Kasada uses TLS fingerprinting at the network level; JS-level patches alone are insufficient. Real Chrome + stealth args (already in place) is the right approach; proxy + CapSolver is the right solve path.
+- ⏳ **CapSolver end-to-end verify blocked on Bailey** — 4 steps needed on Unraid (see "Start here" section above). Next agent picks up immediately once Bailey confirms proxy is live.
 
 ### Added this session (twenty-fifth)
 - ✓ **Kasada detection timing fix** — `pace(6000)` in `run_build_cart()` and `pace(7000)` in `run_login()` before `detect_session_state()`. Kasada fires ~2–5s after page load; fixed wait ensures challenge is overlaying before we check. `01_store_loaded.png` taken after wait.

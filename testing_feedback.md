@@ -4,6 +4,33 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-06-30 (twenty-sixth session)
+
+**CapSolver live end-to-end test — proxy confirmed as the only remaining blocker**
+Ran `build-cart --force` with session 25 timing fixes in place. Kasada was detected correctly
+(search bar not visible after 6s wait → `kasada_challenge`). CapSolver fired and submitted
+`AntiKasadaTask` successfully. Failed with `InvalidRequestError: unable to process task request`
+because `CAPSOLVER_PROXY` is not set — exactly as expected. Option 1 Telegram fallback fired
+correctly. Research confirmed: `AntiKasadaTask` exists in CapSolver's SDK (not in public docs
+but present in all official language SDKs). `playwright-stealth` is not a viable alternative
+(Kasada uses TLS fingerprinting at the network level; JS patches are insufficient).
+
+**tinyproxy proxy setup fully documented for Unraid**
+`docker/tinyproxy.conf` created with `BasicAuth capsolver CHANGE_THIS_PASSWORD` placeholder.
+`tinyproxy` service added to `docker/docker-compose.yml` (`vimagick/tinyproxy`, port 8888,
+mounts `tinyproxy.conf` read-only). `CAPSOLVER_PROXY` added to `.env.example` with both
+formats: public IP (local dev / router port-forward) and container name
+(`autochef-tinyproxy`, for Docker-on-Unraid where both containers are co-located).
+`improvement_capsolver.md` fully rewritten: status updated from "not yet implemented" to
+"code complete, blocked on proxy"; old implementation plan removed; 6-step Unraid setup
+walkthrough added (config file → compose → router port-forward → `.env` → `curl` verify →
+`build-cart --force` test) with success/failure diagnostic examples.
+Files: `docker/tinyproxy.conf` (new), `docker/docker-compose.yml`,
+`.env.example`, `docs/features/improvement_capsolver.md`, `future_enhancements.md`,
+`TESTING_HANDOFF.md`
+
+---
+
 ## Implemented / Fixed — 2026-06-30 (twenty-fifth session)
 
 **Kasada detection timing fix**
@@ -176,14 +203,15 @@ Three new feature specs written via structured interview with Bailey. No bugs fi
 
 ## Known Issues (not yet fixed)
 
-**CapSolver requires `CAPSOLVER_PROXY` — not yet set up (as of twenty-fifth session)**
-CapSolver's `AntiKasadaTask` requires a `proxy` field pointing to an HTTP/SOCKS5 proxy that
-routes from Bailey's outgoing IP (70.131.45.67). Without it, the API returns
-`InvalidRequestError: unable to process task request`. Detection now works correctly (timing
-fix + overhaul both verified via debug screenshots). CapSolver itself fires but the task is
-rejected without the proxy. Set `CAPSOLVER_PROXY` in `.env` (format:
-`http://user:pass@host:port`) pointing to a proxy at Bailey's outgoing IP, then re-run
-`build-cart --force` to verify the end-to-end auto-solve flow.
+**CapSolver requires `CAPSOLVER_PROXY` — setup documented, awaiting Bailey to deploy (twenty-sixth session)**
+CapSolver's `AntiKasadaTask` requires a proxy at Bailey's outgoing IP (70.131.45.67) so the
+solve request appears to come from the same IP as the browser. Without it: `InvalidRequestError:
+unable to process task request` (confirmed in live test this session). Full setup is
+documented — `docker/tinyproxy.conf` and the compose service are ready. Bailey needs to:
+(1) replace `CHANGE_THIS_PASSWORD` in `tinyproxy.conf`, (2) deploy the tinyproxy container
+on Unraid, (3) forward router port 8888 → 192.168.1.64:8888, (4) set `CAPSOLVER_PROXY` in
+`.env`. See [docs/features/improvement_capsolver.md](docs/features/improvement_capsolver.md)
+for the full walkthrough and `curl` verification step.
 
 For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
 

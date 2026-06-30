@@ -1,6 +1,15 @@
 version: "3.8"
 
 services:
+  tinyproxy:
+    image: vimagick/tinyproxy
+    container_name: autochef-tinyproxy
+    volumes:
+      - ./tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
+    ports:
+      - "8888:8888"
+    restart: unless-stopped
+
   autochef:
     build:
       context: ..
