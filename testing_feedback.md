@@ -4,6 +4,42 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-06-30 (twenty-third session)
+
+**CapSolver Kasada auto-solving — implemented, not yet verified**
+`solve_kasada_challenge()` added to `cart.py`. Uses CapSolver's `AntiKasadaTask`, injects any
+returned token via `window.__kpsdk_answer` and cookies via `page.context.add_cookies()`, then
+reloads and re-checks session state. CapSolver account set up ($6 balance), `CAPSOLVER_API_KEY`
+added to `.env` and `.env.example`, `capsolver>=1.0.0` added to `requirements.txt`. CapSolver
+never fired during testing — Kasada detection timing issue (see Known Issues).
+
+**Automated login flow**
+`run_login()` refactored to auto-fill credentials from `FOODLION_USERNAME`/`FOODLION_PASSWORD`
+in `.env`. Navigates to store, runs CapSolver at each checkpoint (initial load, after Sign In
+click, after email step, after credential submission), pauses for 2FA. Falls back to fully manual
+mode if credentials absent. New selectors: `SEL_SIGNIN_LINK`, `SEL_EMAIL_INPUT`,
+`SEL_PASSWORD_INPUT`, `SEL_LOGIN_CONTINUE`, `SEL_LOGIN_SUBMIT`.
+File: `cart_builder/cart.py`
+
+**`detect_session_state()` improved — body-text Kasada detection**
+Added body-text detection for the "Verification Required" Kasada variant (image/audio icons,
+"RETRY" button) which has no Kasada-specific DOM attributes and a plain domain page title.
+Detects via `"verification required" in body and "unusual activity" in body`.
+File: `cart_builder/cart.py:detect_session_state()`
+
+**Async Kasada detection guard in `run_build_cart()`**
+After session check passes as "valid", uses `page.locator(SEL_SEARCH[0]).wait_for(state="visible",
+timeout=5000)` to confirm search bar is actually interactable. If not visible, re-runs
+`detect_session_state()` and `solve_kasada_challenge()`. Still unreliable — see Known Issues.
+File: `cart_builder/cart.py:run_build_cart()`
+
+**Autonomous testing standard documented**
+"Testing practice" section in `TESTING_HANDOFF.md` rewritten. Agent runs tests itself; only
+checks in with Bailey for 2FA, Telegram approvals, and external account setup.
+`feedback_autonomous_testing.md` saved to memory.
+
+---
+
 ## Implemented / Fixed — 2026-06-29 (twenty-second session)
 
 **Feature priority section added — planning only, no code written**
@@ -76,7 +112,20 @@ Three new feature specs written via structured interview with Bailey. No bugs fi
 
 ## Known Issues (not yet fixed)
 
-No open issues. For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
+**Kasada detection timing — CapSolver never fires (as of twenty-third session)**
+Food Lion's SPA renders page content (including the search bar) before Kasada JS fires. Kasada
+overlays the page ~2–5 seconds after `networkidle`. `detect_session_state()` runs during the
+brief window where the page looks valid, returns `"valid"`, and `solve_kasada_challenge()` is
+never called. The `wait_for(state="visible", timeout=5000)` on the search bar catches this if
+Kasada fires within the 5s window, but the search bar may become visible momentarily before
+Kasada overlays it — causing `wait_for` to resolve immediately and the re-check to not run.
+
+Next debugging step: add a screenshot capture at the moment `detect_session_state()` is called
+so we can see exactly what the page looks like during detection. Also consider adding a fixed
+`pace(5000)` before ALL detection calls in the login/build flow to guarantee Kasada has had time
+to fire. The planned "Debug Screenshots" feature would directly help here.
+
+For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
 
 ---
 

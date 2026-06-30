@@ -165,6 +165,7 @@ cp .env.example .env
 | `TELEGRAM_CHAT_ID` | Telegram → `@userinfobot` (your personal chat ID with the bot) |
 | `FOODLION_USERNAME` | Your Food Lion / Instacart account email |
 | `FOODLION_PASSWORD` | Your Food Lion / Instacart account password |
+| `CAPSOLVER_API_KEY` | (Optional) capsolver.com → Dashboard → API Key — auto-solves Kasada bot-detection challenges; falls back to manual session-refresh alert if unset |
 | `UPTIME_KUMA_PUSH_URL` | Uptime Kuma → Monitors → Push-type monitor → Push URL |
 | `MEALIE_URL` | Local dev override only (e.g. `http://localhost:9000`) |
 

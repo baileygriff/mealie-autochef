@@ -4,3 +4,4 @@
 # venv baked into the same Docker image, alongside the Ruby runtime).
 
 playwright>=1.45
+capsolver>=1.0.0

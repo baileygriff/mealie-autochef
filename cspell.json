@@ -69,7 +69,9 @@
     "multiuser",
     "setmeal",
     "NlpCommand",
-    "nlp"
+    "nlp",
+    "interactable",
+    "networkidle"
   ],
   "ignorePaths": [
     "data/**",

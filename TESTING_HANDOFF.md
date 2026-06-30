@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-29 (twenty-second session)
+## Current state as of 2026-06-30 (twenty-third session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -135,7 +135,8 @@ mealie-autochef-ruby/
 | Application Orchestrator Refactor — Section 1 | ✓ | `lib/autochef/errors.rb` — unified error hierarchy; `ConfigError` moved here from config.rb; 50/50 specs green |
 | Cart Builder Package Refactor — Step 2 | ✓ | Python skeleton: `cart_builder/__init__.py`, `base.py` (GroceryProvider ABC + types), `providers/__init__.py`, `tests/__init__.py`, fixture JSON files |
 | Feature 16 — Nutrition Goals & Macro-Aware Planning | 🗂️ | Spec in [docs/features/feature_16_nutrition_goals.md](docs/features/feature_16_nutrition_goals.md) |
-| CapSolver Kasada auto-solving (Option 2) | 🗂️ | Spec in [docs/features/improvement_capsolver.md](docs/features/improvement_capsolver.md) |
+| CapSolver Kasada auto-solving (Option 2) | 🔧 | Code implemented (twenty-third session); CapSolver account set up, API key in `.env`; not yet verified — Kasada detection timing issue blocks testing |
+| Automated login flow (`--login`) | 🔧 | `run_login()` auto-fills credentials from `.env`; Kasada detection timing issue blocks CapSolver from firing during login |
 | Cart Builder Package Refactor — Steps 3–6 | 🗂️ | Spec in [docs/features/improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
 | Application Orchestrator Refactor — Sections 2–8 | 🗂️ | Spec in [docs/features/improvement_orchestrator_refactor.md](docs/features/improvement_orchestrator_refactor.md) |
 | Feature backlog refactor + new features 21–24 | ✓ | All specs migrated to `docs/features/`; Features 21–24 + Doc 01 added as placeholders |
@@ -245,6 +246,10 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **FlareSolverr cannot solve Kasada.** FlareSolverr (already on Unraid) is Cloudflare-specific (CF_Clearance / Turnstile). Food Lion uses Kasada — a different vendor. FlareSolverr has no Kasada support and cannot be used here. CapSolver is the right tool for Option 2.
 
+**Kasada fires asynchronously after page load — detection must not run too early.** Food Lion's SPA renders the search bar and initial page content, then Kasada JS fires ~2–5 seconds later and overlays the page with a "Verification Required" challenge. `detect_session_state()` called immediately after `navigate_to_store()` sees the search bar in the DOM and returns `"valid"` before Kasada fires. `run_build_cart()` now uses `page.locator(SEL_SEARCH[0]).wait_for(state="visible", timeout=5000)` to confirm the search bar is actually interactable before accepting the session as valid — but this still isn't reliable if the search bar briefly becomes visible before Kasada overlays it. **Next debugging step:** add a screenshot at the point of detection to see exactly what the page looks like when we call `detect_session_state()`. Known-unresolved as of twenty-third session.
+
+**`detect_session_state()` catches the "Verification Required" Kasada variant via body text.** The new-style Kasada challenge (image/audio icons, "RETRY" button) doesn't have `[data-kpsdk-v]` or `#kp-captcha` elements and the page title is just the domain. Detection now checks `body.inner_text()` for `"verification required"` + `"unusual activity"` (added twenty-third session). The timing issue above still applies.
+
 **`LlmRecipeMapper` uses numbered items + index echo** — items sent as `1. {note}`, `2. {note}`, ...  and the LLM must return `"index": N` in each response. The save loop uses `unmapped[index - 1]['note']` as the product_map key, NOT `s['ingredient_name']`. This ensures keys match what `resolve_cart_item` looks up (the full Mealie note). Do not revert to using `s['ingredient_name']` as the key — it strips quantity prefixes and breaks the lookup.
 
 **`/add` flow with LLM enabled** — `cmd_add` routes to `cmd_add_llm` which shows a preview with [✅ Add to cart] [✏️ Edit] [❌ Cancel] buttons before touching Mealie. Pending state `{ action: :waiting_add_confirmation, items: [...] }` is stored in `@pending_states[chat_id]`. Confirmation triggers `execute_add_items` which saves ManualAddition records, pushes to Mealie, and spawns `build-cart --force` in a background thread.
@@ -269,30 +274,35 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **Minimum representative testing.** Chrome/Playwright runs are slow (2–5 min each), Mealie API calls require live connectivity, and the overall pipeline is long. Run the full pipeline only when you actually need to validate end-to-end behavior. For everything else, find the shortest feedback loop that genuinely tests the thing you care about.
 
-**Decision guide — choose the fastest loop that covers the risk:**
+**Autonomous testing standard.** The agent runs tests itself whenever possible — it doesn't ask Bailey to run commands and paste output. After implementing a change, the agent runs the appropriate test, analyzes the result, and reports findings. Bailey is only asked when the agent genuinely cannot proceed alone (see "Bailey's involvement" column below).
 
-| What you're verifying | Preferred approach |
-|---|---|
-| Ruby model behavior, DB queries, scopes | `bundle exec rspec` (in-memory SQLite, < 1s) |
-| A new Ruby helper / utility function | Write a unit spec; don't run main.rb |
-| Config loading / validation | `bundle exec rspec spec/config_spec.rb` |
-| Mealie API path / JSON parsing | `main.rb check` (< 5s) — or mock in spec if possible |
-| Shopping list generation | `main.rb shop` (fast, no browser) |
-| Plan generation (no Telegram) | `main.rb plan` then skip the approval wait |
-| Cart-building logic (no browser) | Spec the Ruby side (consolidation, resolve_cart_item, etc.) |
-| End-to-end cart build with browser | `main.rb build-cart --force` — only when Ruby side is already verified |
-| Previous Purchases selector investigation | `python3 cart_builder/probe_pp.py` (30s, no cart ops) — not `build-cart --force` |
+**Decision guide — who runs what:**
 
-**Pre-define success and failure before running.** Before any test (especially a browser run), write down:
-- What output / log line / DB state counts as success
-- What counts as failure
-- What you'll do if the result is ambiguous
+| What you're verifying | Preferred approach | Bailey's involvement |
+|---|---|---|
+| Ruby model behavior, DB queries, scopes | `bundle exec rspec` (in-memory SQLite, < 1s) | None — agent runs and reports |
+| A new Ruby helper / utility function | Write a unit spec; don't run main.rb | None |
+| Config loading / validation | `bundle exec rspec spec/config_spec.rb` | None |
+| Mealie API path / JSON parsing | `main.rb check` (< 5s) | None |
+| Shopping list generation | `main.rb shop` (fast, no browser) | None |
+| Cart-building logic (no browser) | Spec the Ruby side (consolidation, resolve_cart_item, etc.) | None |
+| Session state check | `python3 cart_builder/probe_pp.py`-style probe script | None |
+| Previous Purchases selector investigation | `python3 cart_builder/probe_pp.py` (30s, no cart ops) | None |
+| End-to-end cart build with browser | `main.rb build-cart --force` — agent runs, watches output | Bailey watches browser if he wants; no interaction required |
+| Plan generation + Telegram flow | `main.rb plan` | Bailey approves in Telegram |
+| Food Lion login / session refresh | `python3 cart_builder/cart.py --login` | Bailey enters 2FA code when terminal prompts |
+| External account setup (CapSolver, Kuma, etc.) | N/A — agent can't create accounts | Bailey does this; agent picks up after |
 
-If you're not sure what success looks like, **ask Bailey** — no assumptions.
+**Check in between building and testing, not instead.** After implementing a change, the agent checks in ("here's what I built, running the test now…") and immediately proceeds — it doesn't wait for approval to run tests it can handle itself. It only stops for Bailey when it hits a genuinely human-gated step.
+
+**Pre-define success and failure before running.** Before any test (especially a browser run):
+- State what output / log line / DB state counts as success
+- State what counts as failure
+- State what you'll do if the result is ambiguous
 
 **Prefer specs over live runs for new Ruby code.** Any new function that can be tested without a browser, a live Mealie instance, or real Telegram credentials should have an RSpec example before it's considered done. Use the in-memory DB + existing spec_helper fixtures. See `spec/manual_addition_spec.rb` for an example of testing model + resolve logic without loading all of main.rb.
 
-**If you're stuck, facing a long-running task, or unsure how to proceed — stop and ask.** Don't grind through a 5-minute browser run hoping it'll reveal the problem. Don't make assumptions about what Bailey would want. A short question saves everyone time.
+**If genuinely stuck — stop and ask.** Don't grind through a 5-minute browser run hoping it'll reveal the problem. Don't make assumptions about what Bailey would want. A short question saves everyone time.
 
 **See [future_enhancements.md § Cart Builder Package Refactor](future_enhancements.md) and [§ Application Orchestrator Refactor](future_enhancements.md) for the two planned refactors that will make this codebase fully unit-testable without live dependencies.**
 
@@ -326,6 +336,13 @@ If you're not sure what success looks like, **ask Bailey** — no assumptions.
 13. Docker Deployment on Unraid (depends on Xvfb) — [spec](docs/features/infra_13_docker_deploy.md)
 14. Uptime Kuma push monitor — [spec](docs/features/infra_14_uptime_kuma.md)
 15. MCP Setup — [spec](docs/features/infra_15_mcp.md)
+
+### Added this session (twenty-third)
+- 🔧 **CapSolver Kasada auto-solving** — `solve_kasada_challenge()` implemented in `cart.py`; `AntiKasadaTask` confirmed supported; CapSolver account set up ($6 balance); `capsolver>=1.0.0` in `requirements.txt`; `CAPSOLVER_API_KEY` in `.env` and `.env.example`. Code runs but CapSolver never fired in testing — Kasada detection timing issue means challenge is detected too early (before Kasada overlays the page). See gotcha above.
+- 🔧 **Automated login flow** — `run_login()` now auto-fills `FOODLION_USERNAME`/`FOODLION_PASSWORD` from `.env`, solves Kasada via CapSolver at each step, and pauses only for 2FA. New selectors: `SEL_SIGNIN_LINK`, `SEL_EMAIL_INPUT`, `SEL_PASSWORD_INPUT`, `SEL_LOGIN_CONTINUE`, `SEL_LOGIN_SUBMIT`. Falls back to manual mode if credentials absent.
+- ✓ **`detect_session_state()` improved** — added body-text detection for Kasada "Verification Required" variant (image/audio challenge page); added `"verification required"` to title keyword list.
+- ✓ **Async Kasada detection guard** — `run_build_cart()` now uses `wait_for(state="visible", timeout=5000)` on the search bar after initial session check; if search bar not visible, re-runs `detect_session_state()`. Still not reliable (see timing gotcha).
+- ✓ **Autonomous testing standard** — "Testing practice" section rewritten; agent now runs all tests itself and only checks in with Bailey for 2FA, Telegram approvals, and external account setup. `feedback_autonomous_testing.md` saved to memory.
 
 ### Added this session (twenty-second)
 - ✓ **Feature priority section added to `future_enhancements.md`** — reviewed all pending TODOs across feedback/improvements, features, and infrastructure. Added three-tier priority table: Tier 1 (all remaining Feedback/Improvements in order: CapSolver → Cart Builder Refactor → Orchestrator Refactor → Debug Screenshots), Tier 2 (new features ordered by impact/effort: Recipe Sleep → Recipe Commands → Cart Review → Nutrition Goals → /newrecipes), Tier 3 (interview-needed items + infrastructure). New feature rule baked in: any item added to backlog must be assigned a tier immediately; default is Tier 3. No code written, no specs changed, no tests run.

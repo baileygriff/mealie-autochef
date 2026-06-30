@@ -245,6 +245,46 @@ SEL_CART_ITEM_REMOVE_CONFIRM = [
     'button:has-text("Confirm")',
 ]
 
+# ── Login automation selectors ─────────────────────────────────────────────────
+# Used by run_login() when FOODLION_USERNAME/FOODLION_PASSWORD are set.
+
+SEL_SIGNIN_LINK = [
+    'a:has-text("Sign In")',
+    'button:has-text("Sign In")',
+    '[data-testid*="sign-in"]',
+    '[aria-label*="Sign In" i]',
+    'a[href*="login"]',
+    'a[href*="sign-in"]',
+]
+
+SEL_EMAIL_INPUT = [
+    'input[type="email"]',
+    'input[autocomplete="email"]',
+    'input[name="email"]',
+    'input[id*="email" i]',
+    'input[placeholder*="email" i]',
+]
+
+SEL_PASSWORD_INPUT = [
+    'input[type="password"]',
+    'input[autocomplete="current-password"]',
+    'input[name="password"]',
+    'input[id*="password" i]',
+]
+
+# "Continue" / "Next" button after entering email in a two-step login flow
+SEL_LOGIN_CONTINUE = [
+    'button:has-text("Continue")',
+    'button:has-text("Next")',
+]
+
+SEL_LOGIN_SUBMIT = [
+    'button[type="submit"]',
+    'button:has-text("Sign In")',
+    'button:has-text("Log In")',
+    'button:has-text("Login")',
+]
+
 # Navigation link to Food Lion's Past Purchases page (top nav bar).
 # Confirmed present in Food Lion nav as "Past Purchases" (2026-06-28).
 SEL_MY_ITEMS_LINK = [
@@ -390,15 +430,19 @@ def make_output(
 
 def run_login() -> int:
     """
-    Open a headed (visible) browser, navigate to Food Lion To Go, and wait
-    for the user to log in manually. Saves the session to AUTH_STATE_PATH.
-    Run this once per auth expiry: python3 cart_builder/cart.py --login
-    """
-    AUTH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    Log in to Food Lion and save the session to AUTH_STATE_PATH.
 
-    log("=== Food Lion To Go — login setup ===")
-    log(f"Opening browser and navigating to {FOODLION_TOGO_URL}")
-    log("Log in to your Food Lion account, then close the browser or press Enter here.")
+    When FOODLION_USERNAME and FOODLION_PASSWORD are set in the environment:
+      - Navigates automatically, solves any Kasada challenge via CapSolver,
+        fills credentials, then pauses for 2FA (enter code + press Enter).
+
+    When credentials are absent: falls back to fully manual mode — browser
+    opens, you do everything, press Enter when done.
+    """
+    username = os.environ.get("FOODLION_USERNAME", "")
+    password = os.environ.get("FOODLION_PASSWORD", "")
+
+    AUTH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -411,13 +455,90 @@ def run_login() -> int:
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         page = context.new_page()
-        page.goto(FOODLION_TOGO_URL)
 
-        log("Waiting for you to log in... (press Enter in this terminal when done)")
-        try:
-            input()
-        except EOFError:
-            pass
+        if not username or not password:
+            log("=== Food Lion manual login (no credentials in env) ===")
+            log(f"Opening {FOODLION_TOGO_URL} — log in, then press Enter here.")
+            page.goto(FOODLION_TOGO_URL)
+            try:
+                input()
+            except EOFError:
+                pass
+        else:
+            log("=== Food Lion automated login ===")
+            log(f"  credentials: {username}")
+
+            # 1. Navigate to store
+            log(f"Navigating to {FOODLION_TOGO_URL}...")
+            page.goto(FOODLION_TOGO_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+            pace(2000)
+
+            # 2. Solve Kasada if it fires on the initial load.
+            # Kasada fires async (2-5s after networkidle) — wait for search bar
+            # to confirm the page is actually accessible before checking session state.
+            search_visible = False
+            try:
+                page.locator(SEL_SEARCH[0]).wait_for(state="visible", timeout=5000)
+                search_visible = True
+            except PlaywrightTimeout:
+                pass
+            if not search_visible:
+                log("Search bar not visible after load — Kasada may have fired, checking...")
+            state = detect_session_state(page)
+            if state == "kasada_challenge":
+                log("Kasada on initial load — calling CapSolver...")
+                solve_kasada_challenge(page)
+
+            # 3. Click Sign In in the nav
+            log("Clicking Sign In...")
+            if not try_click(page, SEL_SIGNIN_LINK, timeout=10000):
+                log("  Could not find Sign In link — may already be on login page")
+            pace(1500)
+
+            # 4. Solve Kasada if it fires after clicking Sign In
+            if detect_session_state(page) == "kasada_challenge":
+                log("Kasada on login page — calling CapSolver...")
+                solve_kasada_challenge(page)
+
+            # 5. Fill email
+            log("Filling email...")
+            if try_fill(page, SEL_EMAIL_INPUT, username, timeout=10000):
+                pace(500)
+                # Some Food Lion flows: email first → Continue → password
+                if try_click(page, SEL_LOGIN_CONTINUE, timeout=3000):
+                    log("  Two-step flow: clicked Continue")
+                    pace(1500)
+                    if detect_session_state(page) == "kasada_challenge":
+                        log("  Kasada after email step — calling CapSolver...")
+                        solve_kasada_challenge(page)
+            else:
+                log("  Email input not found — continuing")
+
+            # 6. Fill password
+            log("Filling password...")
+            if not try_fill(page, SEL_PASSWORD_INPUT, password, timeout=8000):
+                log("  Password input not found — continuing")
+            pace(500)
+
+            # 7. Submit
+            log("Submitting credentials...")
+            try_click(page, SEL_LOGIN_SUBMIT, timeout=5000)
+            pace(3000)
+
+            # 8. Solve Kasada if it fires after credential submission
+            if detect_session_state(page) == "kasada_challenge":
+                log("Kasada after credential submit — calling CapSolver...")
+                solve_kasada_challenge(page)
+
+            # 9. Wait for 2FA
+            log("")
+            log("=== 2FA prompt ===")
+            log("Enter the code sent to your device, then press Enter here.")
+            try:
+                input()
+            except EOFError:
+                pass
+            pace(2000)
 
         context.storage_state(path=str(AUTH_STATE_PATH))
         log(f"Session saved to {AUTH_STATE_PATH}")
@@ -587,9 +708,20 @@ def detect_session_state(page: Page) -> str:
         pass
 
     title = page.title().lower()
-    if any(kw in title for kw in ("just a moment", "please wait", "checking your browser", "enable javascript")):
+    if any(kw in title for kw in ("just a moment", "please wait", "checking your browser", "enable javascript", "verification required")):
         log(f"  Session check: challenge-like title: {page.title()!r}")
         return "kasada_challenge"
+
+    # Kasada "Verification Required" page — different from the slider; shows
+    # image/audio icons + RETRY button. Detected by page body text since the
+    # title and DOM attributes don't expose any Kasada-specific identifiers.
+    try:
+        body = page.locator("body").inner_text(timeout=2000).lower()
+        if "verification required" in body and "unusual activity" in body:
+            log("  Session check: Kasada 'Verification Required' page detected")
+            return "kasada_challenge"
+    except Exception:
+        pass
 
     # Sign-in button visible in the main viewport (not just a nav item).
     # Indicates session dropped without a URL redirect.
@@ -604,6 +736,73 @@ def detect_session_state(page: Page) -> str:
 
     log("  Session check: valid")
     return "valid"
+
+
+def solve_kasada_challenge(page: Page) -> bool:
+    """
+    Attempt to auto-solve a Kasada bot-detection challenge via CapSolver.
+    Returns True if the page is past the challenge after solving, False otherwise.
+
+    Only fires when CAPSOLVER_API_KEY is set in the environment. On any failure
+    (API error, wrong solution shape, challenge still present after injection)
+    returns False so the caller can fall back to the Option 1 Telegram alert.
+
+    The exact solution keys returned by CapSolver for AntiKasadaTask are logged
+    on first use so the injection logic can be refined if needed.
+    """
+    api_key = os.environ.get("CAPSOLVER_API_KEY", "")
+    if not api_key:
+        return False
+
+    try:
+        import capsolver as _capsolver
+    except ImportError:
+        log("  CapSolver: package not installed — skipping (run: pip install capsolver)")
+        return False
+
+    _capsolver.api_key = api_key
+    try:
+        log("  CapSolver: submitting AntiKasadaTask...")
+        solution = _capsolver.solve({
+            "type": "AntiKasadaTask",
+            "pageURL": page.url,
+        })
+        log(f"  CapSolver: solution keys → {list(solution.keys()) if isinstance(solution, dict) else type(solution)}")
+
+        if isinstance(solution, dict):
+            # Token injection — Kasada checks window.__kpsdk_answer on page load.
+            # Field name varies by CapSolver version; try common candidates.
+            token = (
+                solution.get("token")
+                or solution.get("ct")
+                or solution.get("kpsdk_ct")
+                or solution.get("kpsdk_answer")
+                or ""
+            )
+            if token:
+                log(f"  CapSolver: injecting token ({len(str(token))} chars)")
+                page.evaluate(f"window.__kpsdk_answer = {json.dumps(str(token))}")
+
+            # Some CapSolver solutions also return cookies to inject directly
+            raw_cookies = solution.get("cookies")
+            if raw_cookies:
+                if isinstance(raw_cookies, list):
+                    page.context.add_cookies(raw_cookies)
+                    log(f"  CapSolver: injected {len(raw_cookies)} cookie(s)")
+
+        page.reload(wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+        pace(2000)
+
+        if detect_session_state(page) == "valid":
+            log("  CapSolver: challenge cleared successfully")
+            return True
+
+        log("  CapSolver: page still shows challenge after injection")
+        return False
+
+    except Exception as exc:
+        log(f"  CapSolver: solve failed — {exc}")
+        return False
 
 
 def set_pickup_mode(page: Page) -> bool:
@@ -1131,7 +1330,35 @@ def run_build_cart(payload: dict) -> dict:
             navigate_to_store(page, store_name)
 
             # 1b. Verify session is still valid — catch Kasada/login issues early.
-            session_state = detect_session_state(page)
+            # Kasada is injected by JS and can fire a few seconds after networkidle,
+            # so we also verify the search bar is actually accessible before proceeding.
+            # If it's not visible, we wait and re-check to catch the async Kasada fire.
+            def _handle_session_state(state: str) -> str:
+                if state == "kasada_challenge":
+                    log("Kasada challenge detected — attempting CapSolver auto-solve...")
+                    if solve_kasada_challenge(page):
+                        log("  CapSolver solved — continuing build")
+                        return "valid"
+                    log("  CapSolver failed — falling back to manual refresh alert")
+                return state
+
+            session_state = _handle_session_state(detect_session_state(page))
+
+            if session_state == "valid":
+                # Confirm the search bar is actually interactable — Kasada fires
+                # async (2-5s after networkidle) and overlays the page. A DOM count
+                # check passes even when Kasada is covering the element, so we use
+                # wait_for(visible) with a 5s window to catch the async fire.
+                search_visible = False
+                try:
+                    page.locator(SEL_SEARCH[0]).wait_for(state="visible", timeout=5000)
+                    search_visible = True
+                except PlaywrightTimeout:
+                    pass
+                if not search_visible:
+                    log("Search bar not interactable — Kasada may have fired async, re-checking...")
+                    session_state = _handle_session_state(detect_session_state(page))
+
             if session_state != "valid":
                 log(f"Session issue: {session_state} — aborting build, refresh required")
                 return make_output("session_expired", abort_reason=session_state)
