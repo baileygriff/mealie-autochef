@@ -4,6 +4,24 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-06-30 (twenty-fourth session)
+
+**Debug screenshots — per-step, rolling 2-run directory**
+`_debug_screenshot(page, debug_dir, filename)` helper silently captures a screenshot to a per-run
+subdirectory of `SCREENSHOT_DIR`, swallowing errors so a screenshot failure never aborts the build.
+`_rolling_cleanup_debug_dirs()` runs at the start of each `run_build_cart()` call; deletes all but
+the most recent subdirectory (keeping at most 1), so the new run's dir makes it 2 total.
+Screenshots taken: `01_store_loaded.png` (after `navigate_to_store`, before `detect_session_state`
+— the key Kasada timing diagnostic shot), `02_cart_cleared.png`, `03_pickup_mode.png`,
+`04_slot_selected.png`, `05_item_NN_<term>.png` per successful search-based add (numbered across
+PP + search adds), `06_cart_summary.png`, `error.png` on exception. The existing
+`<run_key>.png` at the SCREENSHOT_DIR root is unchanged (still used for Telegram notification).
+`DEBUG_SCREENSHOTS_PATH` documented in `.env.example` as a placeholder for optional copy-to-NAS
+behavior (not implemented yet).
+Files: `cart_builder/cart.py`, `.env.example`, `docs/features/improvement_debug_screenshots.md`
+
+---
+
 ## Implemented / Fixed — 2026-06-30 (twenty-third session)
 
 **CapSolver Kasada auto-solving — implemented, not yet verified**
@@ -112,7 +130,7 @@ Three new feature specs written via structured interview with Bailey. No bugs fi
 
 ## Known Issues (not yet fixed)
 
-**Kasada detection timing — CapSolver never fires (as of twenty-third session)**
+**Kasada detection timing — CapSolver never fires (as of twenty-fourth session)**
 Food Lion's SPA renders page content (including the search bar) before Kasada JS fires. Kasada
 overlays the page ~2–5 seconds after `networkidle`. `detect_session_state()` runs during the
 brief window where the page looks valid, returns `"valid"`, and `solve_kasada_challenge()` is
@@ -120,10 +138,12 @@ never called. The `wait_for(state="visible", timeout=5000)` on the search bar ca
 Kasada fires within the 5s window, but the search bar may become visible momentarily before
 Kasada overlays it — causing `wait_for` to resolve immediately and the re-check to not run.
 
-Next debugging step: add a screenshot capture at the moment `detect_session_state()` is called
-so we can see exactly what the page looks like during detection. Also consider adding a fixed
-`pace(5000)` before ALL detection calls in the login/build flow to guarantee Kasada has had time
-to fire. The planned "Debug Screenshots" feature would directly help here.
+**Next debugging step:** `01_store_loaded.png` now captures the page state immediately after
+`navigate_to_store()` and before `detect_session_state()` is called. Run `build-cart --force`
+when Kasada is actively blocking to see exactly what the page looks like during detection. If
+the screenshot shows the normal store page, the fix is to add a fixed `pace(5000)` before
+detection calls so Kasada has time to overlay. If it shows a challenge page, the detection
+logic itself needs a tweak.
 
 For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
 

@@ -1,9 +1,6 @@
 # Improvement — Debug Screenshots
 
-> **Status:** Spec — not yet implemented.
->
-> **Lifecycle:** Once implemented, remove the Implementation Plan section and document the actual
-> directory layout, rolling window behavior, and any env var usage.
+> **Status:** ✅ Implemented (twenty-fourth session).
 
 ---
 
@@ -15,41 +12,42 @@ re-running.
 
 ---
 
-## Screenshots to capture (in order)
+## Directory layout
 
-1. After `navigate_to_store` + modal dismissal — confirm we're on the right page
-2. After `clear_cart` — confirm cart is empty
-3. After `set_pickup_mode` — confirm pickup tab active
-4. After each `add_item_to_cart` success — confirm item appeared in cart count
-5. After `capture_cart_summary` — final cart view (same as current `run_key.png`)
-6. On any exception — error screenshot (already exists)
+```
+data/cart_screenshots/
+├── <run_key>/                  # debug dir for one run (rolling: last 2 kept)
+│   ├── 01_store_loaded.png     # after navigate_to_store + modal dismissal
+│   ├── 02_cart_cleared.png     # after clear_cart
+│   ├── 03_pickup_mode.png      # after set_pickup_mode
+│   ├── 04_slot_selected.png    # after select_pickup_slot
+│   ├── 05_item_01_<term>.png   # after each successful search-based add
+│   ├── 05_item_02_<term>.png
+│   ├── ...
+│   ├── 06_cart_summary.png     # after capture_cart_summary
+│   └── error.png               # on any exception (also saved at root as <run_key>_error.png)
+└── <run_key>.png               # final cart screenshot (Telegram notification only)
+```
+
+**Rolling window:** At the start of `run_build_cart()`, `_rolling_cleanup_debug_dirs()` deletes
+all but the most recent subdirectory. Creating the new run's dir makes it 2 total (current + one
+prior run).
+
+**Item numbering:** `item_num` starts from the count of Previous Purchases adds. Search-based adds
+continue the numbering so screenshots span the full add sequence.
 
 ---
 
-## Implementation plan
+## Optional env var
 
-### `cart.py` — per-step screenshots with rolling cleanup
-
-```python
-debug_dir = SCREENSHOT_DIR / run_key
-debug_dir.mkdir(parents=True, exist_ok=True)
-page.screenshot(path=str(debug_dir / "01_store_loaded.png"))
-```
-
-**Rolling window:** At the start of `run_build_cart()`, list all subdirectories of `SCREENSHOT_DIR`
-sorted by mtime. If more than 1 exists, delete the oldest. This keeps the last 2 full run
-directories.
-
-The final summary screenshot (`run_key.png`) stays as-is for the Telegram notification.
-
-### Optional env var
-
-`DEBUG_SCREENSHOTS_PATH`: if set, rsync/copy the debug run directory there after completion.
+`DEBUG_SCREENSHOTS_PATH` — if set in `.env`, the per-run debug dir is copied there after
+completion (useful for a network share or NAS mount). Not yet implemented; the env var is
+documented in `.env.example` as a placeholder.
 
 ---
 
 ## Key files
 
-- `cart_builder/cart.py` — `run_build_cart()`: per-step screenshots, rolling cleanup, optional
-  copy to `DEBUG_SCREENSHOTS_PATH`
-- `.env.example` — document `DEBUG_SCREENSHOTS_PATH`
+- `cart_builder/cart.py` — `_debug_screenshot()`, `_rolling_cleanup_debug_dirs()`,
+  `run_build_cart()` calls
+- `.env.example` — `DEBUG_SCREENSHOTS_PATH` documented

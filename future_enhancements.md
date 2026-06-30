@@ -32,7 +32,7 @@ All remaining Feedback / Improvements items. Complete these before any new featu
 | CapSolver Kasada Auto-solving | Feedback | ~30 lines; eliminates manual weekly session refresh |
 | Cart Builder Package Refactor (Steps 3–6) | Feedback | Enables browser-free Python tests; pre-req for FoodLionProvider isolation |
 | Orchestrator Refactor (Sections 2–8) | Feedback | Per-function LLM model config; injectable notifier; `main.rb` → thin router |
-| Debug Screenshots | Feedback | Low effort; completes the feedback backlog |
+| ~~Debug Screenshots~~ | ~~Feedback~~ | ~~Low effort; completes the feedback backlog~~ ✅ done |
 
 ### Tier 2 — New Features, Highest Impact
 
@@ -81,6 +81,7 @@ Lower priority, blocked on an interview, or deferred until a dependency is ready
 - ✅ Automap Telegram report reformatted — two sections: Grocery additions + Pantry skips
 - ✅ Previous Purchases cart optimization — PP-first add pass; 66 cards, 3/24 matched; verified end-to-end
 - ✅ Session Expiry Detection (Option 1) — `detect_session_state()` in `cart.py`; Telegram alert + inline rebuild button
+- ✅ Debug Screenshots — per-step shots in `data/cart_screenshots/<run_key>/`; rolling 2-run cleanup; `01_store_loaded.png` is the key Kasada timing diagnostic
 
 ### Pending
 
@@ -89,7 +90,6 @@ Lower priority, blocked on an interview, or deferred until a dependency is ready
 | CapSolver Kasada Auto-solving (Option 2) | 🔧 Code implemented (twenty-third session) — blocked on Kasada detection timing bug; CapSolver never fires | [improvement_capsolver.md](docs/features/improvement_capsolver.md) |
 | Cart Builder Package Refactor | 🗂️ Complete spec (Step 2 done) | [improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
 | Application Orchestrator Refactor | 🗂️ Complete spec (Section 1 done) | [improvement_orchestrator_refactor.md](docs/features/improvement_orchestrator_refactor.md) |
-| Debug Screenshots | 🗂️ Complete spec | [improvement_debug_screenshots.md](docs/features/improvement_debug_screenshots.md) |
 
 ---
 
@@ -97,7 +97,7 @@ Lower priority, blocked on an interview, or deferred until a dependency is ready
 
 | # | Feature | Priority | Status | Spec |
 |---|---|---|---|---|
-| 5 | Debug Screenshots | low | 🗂️ spec complete | [improvement_debug_screenshots.md](docs/features/improvement_debug_screenshots.md) |
+| 5 | Debug Screenshots | low | ✅ implemented (twenty-fourth session) | [improvement_debug_screenshots.md](docs/features/improvement_debug_screenshots.md) |
 | 7 | Cart Review, Auto-Fix + `/cart-correction` | high | 🗂️ spec complete | [feature_07_cart_review.md](docs/features/feature_07_cart_review.md) |
 | 8 | LLM Aided Shopping (per-item LLM product selection, `PreferenceNote` model) | medium | 🗂️ spec complete | [feature_08_llm_aided_shopping.md](docs/features/feature_08_llm_aided_shopping.md) |
 | 9 | Recipe Sleep | medium | 🗂️ spec complete | [feature_09_recipe_sleep.md](docs/features/feature_09_recipe_sleep.md) |

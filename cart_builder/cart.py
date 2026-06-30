@@ -84,6 +84,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -424,6 +425,34 @@ def make_output(
         "cart_url": cart_url,
         "previous_purchases_stats": previous_purchases_stats,
     }
+
+
+# ─── Debug screenshots ────────────────────────────────────────────────────────
+
+def _debug_screenshot(page: Page, debug_dir: Path, filename: str) -> None:
+    """Take a debug screenshot silently. Errors are logged but never fatal."""
+    try:
+        page.screenshot(path=str(debug_dir / filename), full_page=False)
+        log(f"  [debug] {debug_dir.name}/{filename}")
+    except Exception as exc:
+        log(f"  [debug] {filename} failed: {exc}")
+
+
+def _rolling_cleanup_debug_dirs() -> None:
+    """Keep at most 1 existing run directory so the new run makes it 2 total."""
+    if not SCREENSHOT_DIR.exists():
+        return
+    subdirs = sorted(
+        [d for d in SCREENSHOT_DIR.iterdir() if d.is_dir()],
+        key=lambda d: d.stat().st_mtime,
+    )
+    while len(subdirs) > 1:
+        oldest = subdirs.pop(0)
+        try:
+            shutil.rmtree(oldest)
+            log(f"  [debug] Pruned old debug run: {oldest.name}")
+        except Exception as exc:
+            log(f"  [debug] Could not prune {oldest.name}: {exc}")
 
 
 # ─── Login mode ───────────────────────────────────────────────────────────────
@@ -1302,6 +1331,12 @@ def run_build_cart(payload: dict) -> dict:
 
     log(f"=== cart.py build-cart | run_key={run_key} | items={len(items)} | dry_run={dry_run} ===")
 
+    # Per-run debug screenshot directory (rolling: keeps last 2 runs)
+    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    _rolling_cleanup_debug_dirs()
+    debug_dir = SCREENSHOT_DIR / run_key
+    debug_dir.mkdir(parents=True, exist_ok=True)
+
     if not items:
         return make_output("aborted", abort_reason="No items provided in cart input")
 
@@ -1328,6 +1363,7 @@ def run_build_cart(payload: dict) -> dict:
         try:
             # 1. Navigate to Food Lion To Go
             navigate_to_store(page, store_name)
+            _debug_screenshot(page, debug_dir, "01_store_loaded.png")
 
             # 1b. Verify session is still valid — catch Kasada/login issues early.
             # Kasada is injected by JS and can fire a few seconds after networkidle,
@@ -1365,10 +1401,12 @@ def run_build_cart(payload: dict) -> dict:
 
             # 1c. Clear any items left from a previous run before adding fresh
             clear_cart(page)
+            _debug_screenshot(page, debug_dir, "02_cart_cleared.png")
 
             # 2. Ensure pickup mode
             set_pickup_mode(page)
             pace()
+            _debug_screenshot(page, debug_dir, "03_pickup_mode.png")
 
             # 3. Select pickup slot
             pickup_slot = select_pickup_slot(page, pickup_pref)
@@ -1377,6 +1415,7 @@ def run_build_cart(payload: dict) -> dict:
             else:
                 log("WARNING: Pickup slot not confirmed — continuing without slot selection")
             pace()
+            _debug_screenshot(page, debug_dir, "04_slot_selected.png")
 
             # 4. Add items — Previous Purchases first, search-based fallback for the rest
             log(f"Adding {len(items)} item(s) to cart...")
@@ -1389,14 +1428,21 @@ def run_build_cart(payload: dict) -> dict:
             if prev_result["added"]:
                 log(f"  {len(prev_result['added'])}/{len(items)} item(s) added from Previous Purchases")
 
+            # Track item number across PP + search adds; screenshot each successful search add
+            item_num = len(prev_result["added"])
             for item in prev_result["remaining"]:
                 pace(STEP_DELAY_MS)
                 success, flagged_reason = add_item_to_cart(page, item)
                 if not success:
                     flagged_items.append(flagged_reason or item["search_term"])
+                else:
+                    item_num += 1
+                    safe_term = re.sub(r"[^a-z0-9]", "_", item["search_term"].lower())[:20]
+                    _debug_screenshot(page, debug_dir, f"05_item_{item_num:02d}_{safe_term}.png")
 
             # 5. Capture cart summary
             cart_total, screenshot_path, cart_url = capture_cart_summary(page, run_key)
+            _debug_screenshot(page, debug_dir, "06_cart_summary.png")
 
             # 6. Spending cap check (defence-in-depth; Ruby also checks before calling us)
             if cart_total is not None and cart_total > spending_cap:
@@ -1419,6 +1465,7 @@ def run_build_cart(payload: dict) -> dict:
                     path=str(SCREENSHOT_DIR / f"{run_key}_error.png"),
                     full_page=False
                 )
+                _debug_screenshot(page, debug_dir, "error.png")
             except Exception:
                 pass
             raise  # nonzero exit → Ruby treats as hard failure

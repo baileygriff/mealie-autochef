@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-30 (twenty-third session)
+## Current state as of 2026-06-30 (twenty-fourth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -137,6 +137,7 @@ mealie-autochef-ruby/
 | Feature 16 — Nutrition Goals & Macro-Aware Planning | 🗂️ | Spec in [docs/features/feature_16_nutrition_goals.md](docs/features/feature_16_nutrition_goals.md) |
 | CapSolver Kasada auto-solving (Option 2) | 🔧 | Code implemented (twenty-third session); CapSolver account set up, API key in `.env`; not yet verified — Kasada detection timing issue blocks testing |
 | Automated login flow (`--login`) | 🔧 | `run_login()` auto-fills credentials from `.env`; Kasada detection timing issue blocks CapSolver from firing during login |
+| Debug screenshots | ✓ | Per-step screenshots in `data/cart_screenshots/<run_key>/`; rolling 2-run cleanup; `01_store_loaded.png` now captures page state at the Kasada detection point |
 | Cart Builder Package Refactor — Steps 3–6 | 🗂️ | Spec in [docs/features/improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
 | Application Orchestrator Refactor — Sections 2–8 | 🗂️ | Spec in [docs/features/improvement_orchestrator_refactor.md](docs/features/improvement_orchestrator_refactor.md) |
 | Feature backlog refactor + new features 21–24 | ✓ | All specs migrated to `docs/features/`; Features 21–24 + Doc 01 added as placeholders |
@@ -313,7 +314,7 @@ bundle exec ruby scripts/seed_product_map.rb
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
 
 ### New features (feedback items 1–4 cleared in ninth session; Feature 6 verified in twelfth)
-5. Debug screenshots — [spec](docs/features/improvement_debug_screenshots.md)
+5. ✅ Debug screenshots — implemented twenty-fourth session; [spec](docs/features/improvement_debug_screenshots.md)
 6. ✅ LLM Assisted Recipe Mapping — verified twelfth session; bug fixed (product_map key mismatch)
 7. **Cart Review, Auto-Fix + /cart-correction** — [spec](docs/features/feature_07_cart_review.md)
 8. LLM Aided Shopping — [spec](docs/features/feature_08_llm_aided_shopping.md)
@@ -336,6 +337,10 @@ bundle exec ruby scripts/seed_product_map.rb
 13. Docker Deployment on Unraid (depends on Xvfb) — [spec](docs/features/infra_13_docker_deploy.md)
 14. Uptime Kuma push monitor — [spec](docs/features/infra_14_uptime_kuma.md)
 15. MCP Setup — [spec](docs/features/infra_15_mcp.md)
+
+### Added this session (twenty-fourth)
+- ✓ **Debug screenshots** — `_debug_screenshot()` and `_rolling_cleanup_debug_dirs()` helpers added to `cart.py`. `run_build_cart()` now captures: `01_store_loaded.png` (after `navigate_to_store`, before `detect_session_state` — key shot for Kasada timing debug), `02_cart_cleared.png`, `03_pickup_mode.png`, `04_slot_selected.png`, `05_item_NN_<term>.png` per successful search-based add, `06_cart_summary.png`, `error.png` on exception. All screenshots go into `data/cart_screenshots/<run_key>/`. Rolling cleanup keeps last 2 run directories (`shutil.rmtree` on oldest). `DEBUG_SCREENSHOTS_PATH` env var documented in `.env.example` as a placeholder for optional copy-to-NAS behavior (not yet implemented). RSpec: 50/50 green, no Ruby changes.
+- ✓ **Spec updated** — `docs/features/improvement_debug_screenshots.md` now shows ✅ status with actual directory layout and rolling window behavior.
 
 ### Added this session (twenty-third)
 - 🔧 **CapSolver Kasada auto-solving** — `solve_kasada_challenge()` implemented in `cart.py`; `AntiKasadaTask` confirmed supported; CapSolver account set up ($6 balance); `capsolver>=1.0.0` in `requirements.txt`; `CAPSOLVER_API_KEY` in `.env` and `.env.example`. Code runs but CapSolver never fired in testing — Kasada detection timing issue means challenge is detected too early (before Kasada overlays the page). See gotcha above.

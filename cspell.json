@@ -71,7 +71,9 @@
     "NlpCommand",
     "nlp",
     "interactable",
-    "networkidle"
+    "networkidle",
+    "shutil",
+    "rmtree"
   ],
   "ignorePaths": [
     "data/**",
