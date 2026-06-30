@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-30 (twenty-fourth session)
+## Current state as of 2026-06-30 (twenty-fifth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -135,8 +135,8 @@ mealie-autochef-ruby/
 | Application Orchestrator Refactor — Section 1 | ✓ | `lib/autochef/errors.rb` — unified error hierarchy; `ConfigError` moved here from config.rb; 50/50 specs green |
 | Cart Builder Package Refactor — Step 2 | ✓ | Python skeleton: `cart_builder/__init__.py`, `base.py` (GroceryProvider ABC + types), `providers/__init__.py`, `tests/__init__.py`, fixture JSON files |
 | Feature 16 — Nutrition Goals & Macro-Aware Planning | 🗂️ | Spec in [docs/features/feature_16_nutrition_goals.md](docs/features/feature_16_nutrition_goals.md) |
-| CapSolver Kasada auto-solving (Option 2) | 🔧 | Code implemented (twenty-third session); CapSolver account set up, API key in `.env`; not yet verified — Kasada detection timing issue blocks testing |
-| Automated login flow (`--login`) | 🔧 | `run_login()` auto-fills credentials from `.env`; Kasada detection timing issue blocks CapSolver from firing during login |
+| CapSolver Kasada auto-solving (Option 2) | 🔧 | Detection now works; CapSolver fires but fails — `CAPSOLVER_PROXY` required (CapSolver routes request from proxy IP; without it: `InvalidRequestError`). Need proxy at Bailey's outgoing IP (70.131.45.67). |
+| Automated login flow (`--login`) | 🔧 | `run_login()` auto-fills credentials; timing fix applied (7s wait); blocked until proxy is set (CapSolver still needed to solve login Kasada) |
 | Debug screenshots | ✓ | Per-step screenshots in `data/cart_screenshots/<run_key>/`; rolling 2-run cleanup; `01_store_loaded.png` now captures page state at the Kasada detection point |
 | Cart Builder Package Refactor — Steps 3–6 | 🗂️ | Spec in [docs/features/improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
 | Application Orchestrator Refactor — Sections 2–8 | 🗂️ | Spec in [docs/features/improvement_orchestrator_refactor.md](docs/features/improvement_orchestrator_refactor.md) |
@@ -247,9 +247,13 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **FlareSolverr cannot solve Kasada.** FlareSolverr (already on Unraid) is Cloudflare-specific (CF_Clearance / Turnstile). Food Lion uses Kasada — a different vendor. FlareSolverr has no Kasada support and cannot be used here. CapSolver is the right tool for Option 2.
 
-**Kasada fires asynchronously after page load — detection must not run too early.** Food Lion's SPA renders the search bar and initial page content, then Kasada JS fires ~2–5 seconds later and overlays the page with a "Verification Required" challenge. `detect_session_state()` called immediately after `navigate_to_store()` sees the search bar in the DOM and returns `"valid"` before Kasada fires. `run_build_cart()` now uses `page.locator(SEL_SEARCH[0]).wait_for(state="visible", timeout=5000)` to confirm the search bar is actually interactable before accepting the session as valid — but this still isn't reliable if the search bar briefly becomes visible before Kasada overlays it. **Next debugging step:** add a screenshot at the point of detection to see exactly what the page looks like when we call `detect_session_state()`. Known-unresolved as of twenty-third session.
+**Kasada fires asynchronously after page load — `run_build_cart()` now waits 6s before detection.** Food Lion's SPA renders the search bar briefly before Kasada JS fires and overlays the page (~2–5s after load). The fix (twenty-fifth session): `pace(6000)` is called after `navigate_to_store()` and before `detect_session_state()`, ensuring Kasada has had time to overlay the page before we check. `run_login()` uses a 7s wait. Screenshot `01_store_loaded.png` is taken after the wait so it shows the actual state at detection time.
 
-**`detect_session_state()` catches the "Verification Required" Kasada variant via body text.** The new-style Kasada challenge (image/audio icons, "RETRY" button) doesn't have `[data-kpsdk-v]` or `#kp-captcha` elements and the page title is just the domain. Detection now checks `body.inner_text()` for `"verification required"` + `"unusual activity"` (added twenty-third session). The timing issue above still applies.
+**Kasada also fires on subsequent store page loads mid-build.** `add_from_previous_purchases()` ends with `page.goto(FOODLION_TOGO_URL)` — Kasada can fire on that return navigation too. Fix (twenty-fifth session): a 3s re-check is run after PP returns, before the search loop. Additionally, `add_item_to_cart()` calls `detect_session_state()` if the search bar fill fails — if Kasada is detected, the search loop aborts immediately rather than timing out on all remaining items.
+
+**`detect_session_state()` uses search bar visibility as the primary Kasada indicator (twenty-fifth session).** The Kasada slider challenge replaces the page content but `document.body.innerText` returns empty `''` (content hidden in shadow DOM or similar). The search bar visibility check (`page.locator(SEL_SEARCH[0]).is_visible()`) is what reliably catches all Kasada variants — if the search bar is gone after the wait, Kasada is active. Other checks (frame URLs, DOM attributes, title, body text, slider text) are tried first as faster paths. Detection now logs url, title, and body[:150] for debugging.
+
+**CapSolver `AntiKasadaTask` requires a proxy pointing to Bailey's outgoing IP.** CapSolver needs to make the Kasada-solving request from the same IP the browser uses (70.131.45.67 based on the challenge page). Without a proxy, the API returns `InvalidRequestError: unable to process task request`. Set `CAPSOLVER_PROXY` in `.env` to an HTTP/SOCKS5 proxy that routes through Bailey's outgoing IP. Options: run `tinyproxy` or `squid` on Unraid and port-forward, or use a commercial proxy at that IP. Until this is set, CapSolver falls back to Option 1 (Telegram alert for manual refresh).
 
 **`LlmRecipeMapper` uses numbered items + index echo** — items sent as `1. {note}`, `2. {note}`, ...  and the LLM must return `"index": N` in each response. The save loop uses `unmapped[index - 1]['note']` as the product_map key, NOT `s['ingredient_name']`. This ensures keys match what `resolve_cart_item` looks up (the full Mealie note). Do not revert to using `s['ingredient_name']` as the key — it strips quantity prefixes and breaks the lookup.
 
@@ -337,6 +341,14 @@ bundle exec ruby scripts/seed_product_map.rb
 13. Docker Deployment on Unraid (depends on Xvfb) — [spec](docs/features/infra_13_docker_deploy.md)
 14. Uptime Kuma push monitor — [spec](docs/features/infra_14_uptime_kuma.md)
 15. MCP Setup — [spec](docs/features/infra_15_mcp.md)
+
+### Added this session (twenty-fifth)
+- ✓ **Kasada detection timing fix** — `pace(6000)` in `run_build_cart()` and `pace(7000)` in `run_login()` before `detect_session_state()`. Kasada fires ~2–5s after page load; fixed wait ensures challenge is overlaying before we check. `01_store_loaded.png` taken after wait.
+- ✓ **`detect_session_state()` overhaul** — search bar `is_visible()` is now the primary Kasada indicator (Kasada empties `body.innerText`). Layers: frame URL → DOM attributes → title keywords → `page.evaluate(body.innerText)` → slider text → search bar visibility → sign-in button. Logs url/title/body[:150].
+- ✓ **Pre-search-loop re-check** — 3s wait + `_handle_session_state` after PP returns, before search loop. Aborts immediately if Kasada fires on the return navigation.
+- ✓ **Fail-fast Kasada in `add_item_to_cart()`** — if search bar fill fails, calls `detect_session_state()`; returns `"kasada_challenge"` immediately and search loop aborts. Eliminates 5 selectors × 6s × N items of stall time.
+- ✓ **Ruby `session_expired` crash fix** — removed `write_order_history()` call for `session_expired` branch in `main.rb`; `OrderHistory` validates status and `session_expired` isn't in the allowed list.
+- 🔧 **CapSolver proxy support** — `CAPSOLVER_PROXY` env var added; `solve_kasada_challenge()` passes it to `AntiKasadaTask`. Without proxy, CapSolver returns `InvalidRequestError`. Proxy at Bailey's outgoing IP (70.131.45.67) still needed.
 
 ### Added this session (twenty-fourth)
 - ✓ **Debug screenshots** — `_debug_screenshot()` and `_rolling_cleanup_debug_dirs()` helpers added to `cart.py`. `run_build_cart()` now captures: `01_store_loaded.png` (after `navigate_to_store`, before `detect_session_state` — key shot for Kasada timing debug), `02_cart_cleared.png`, `03_pickup_mode.png`, `04_slot_selected.png`, `05_item_NN_<term>.png` per successful search-based add, `06_cart_summary.png`, `error.png` on exception. All screenshots go into `data/cart_screenshots/<run_key>/`. Rolling cleanup keeps last 2 run directories (`shutil.rmtree` on oldest). `DEBUG_SCREENSHOTS_PATH` env var documented in `.env.example` as a placeholder for optional copy-to-NAS behavior (not yet implemented). RSpec: 50/50 green, no Ruby changes.

@@ -4,6 +4,52 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-06-30 (twenty-fifth session)
+
+**Kasada detection timing fix**
+`run_build_cart()` now calls `pace(6000)` after `navigate_to_store()` and before
+`detect_session_state()` — Kasada fires ~2–5s after page load; the 6s wait ensures the challenge
+is already overlaying the page when we check. `run_login()` uses a 7s wait for the same reason.
+`01_store_loaded.png` is taken after the wait so it captures the actual challenge state.
+File: `cart_builder/cart.py:run_build_cart()`, `run_login()`
+
+**`detect_session_state()` overhaul — search bar visibility is the primary Kasada indicator**
+Kasada's slider challenge replaces page content but `document.body.innerText` returns `''`
+(content hidden in shadow DOM). The search bar visibility check (`is_visible()`) is what
+reliably catches all Kasada variants. Detection layers (tried in order): frame URL check →
+DOM attribute check → challenge title keywords → body text via `page.evaluate()` → slider text
+→ search bar visibility → sign-in button. Logs url, title, and body[:150] for debugging.
+File: `cart_builder/cart.py:detect_session_state()`
+
+**Pre-search-loop Kasada re-check**
+`add_from_previous_purchases()` ends with `page.goto(FOODLION_TOGO_URL)` — Kasada fires on
+that return navigation too. A 3s wait + re-check (`_handle_session_state`) was added before the
+search loop. If Kasada is active, the build aborts immediately instead of failing all 24 items.
+File: `cart_builder/cart.py:run_build_cart()`
+
+**Fail-fast Kasada detection in `add_item_to_cart()`**
+When the search bar fill fails, `detect_session_state()` is called. If it returns
+`"kasada_challenge"`, the function returns `(False, "kasada_challenge")` immediately. The search
+loop in `run_build_cart()` detects this reason and aborts rather than timing out on every
+remaining item. Avoids 5 selectors × 6s × 24 items of stalled time when Kasada is blocking.
+File: `cart_builder/cart.py:add_item_to_cart()`, `run_build_cart()`
+
+**Ruby crash fix for `session_expired` status**
+`OrderHistory` validates status against `['cart_built', 'approved', 'placed', 'aborted']` —
+`session_expired` is not in the list. `main.rb` was calling `write_order_history()` for the
+`session_expired` branch, causing an `ActiveRecord::RecordInvalid` crash. Removed the
+`write_order_history` call for `session_expired` (it's an interrupted build, not a real order).
+File: `main.rb`
+
+**CapSolver proxy support added (`CAPSOLVER_PROXY`)**
+`solve_kasada_challenge()` now reads `CAPSOLVER_PROXY` from `.env`. If set, adds `"proxy"` to
+the `AntiKasadaTask` payload. Without proxy, CapSolver returns `InvalidRequestError: unable to
+process task request` — the proxy routes the solving request through the user's outgoing IP so
+the returned token is IP-bound. Logs proxy host (not credentials) for debugging.
+File: `cart_builder/cart.py:solve_kasada_challenge()`
+
+---
+
 ## Implemented / Fixed — 2026-06-30 (twenty-fourth session)
 
 **Debug screenshots — per-step, rolling 2-run directory**
@@ -130,20 +176,14 @@ Three new feature specs written via structured interview with Bailey. No bugs fi
 
 ## Known Issues (not yet fixed)
 
-**Kasada detection timing — CapSolver never fires (as of twenty-fourth session)**
-Food Lion's SPA renders page content (including the search bar) before Kasada JS fires. Kasada
-overlays the page ~2–5 seconds after `networkidle`. `detect_session_state()` runs during the
-brief window where the page looks valid, returns `"valid"`, and `solve_kasada_challenge()` is
-never called. The `wait_for(state="visible", timeout=5000)` on the search bar catches this if
-Kasada fires within the 5s window, but the search bar may become visible momentarily before
-Kasada overlays it — causing `wait_for` to resolve immediately and the re-check to not run.
-
-**Next debugging step:** `01_store_loaded.png` now captures the page state immediately after
-`navigate_to_store()` and before `detect_session_state()` is called. Run `build-cart --force`
-when Kasada is actively blocking to see exactly what the page looks like during detection. If
-the screenshot shows the normal store page, the fix is to add a fixed `pace(5000)` before
-detection calls so Kasada has time to overlay. If it shows a challenge page, the detection
-logic itself needs a tweak.
+**CapSolver requires `CAPSOLVER_PROXY` — not yet set up (as of twenty-fifth session)**
+CapSolver's `AntiKasadaTask` requires a `proxy` field pointing to an HTTP/SOCKS5 proxy that
+routes from Bailey's outgoing IP (70.131.45.67). Without it, the API returns
+`InvalidRequestError: unable to process task request`. Detection now works correctly (timing
+fix + overhaul both verified via debug screenshots). CapSolver itself fires but the task is
+rejected without the proxy. Set `CAPSOLVER_PROXY` in `.env` (format:
+`http://user:pass@host:port`) pointing to a proxy at Bailey's outgoing IP, then re-run
+`build-cart --force` to verify the end-to-end auto-solve flow.
 
 For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
 

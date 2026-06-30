@@ -73,7 +73,9 @@
     "interactable",
     "networkidle",
     "shutil",
-    "rmtree"
+    "rmtree",
+    "tinyproxy",
+    "squid"
   ],
   "ignorePaths": [
     "data/**",

@@ -500,19 +500,14 @@ def run_login() -> int:
             # 1. Navigate to store
             log(f"Navigating to {FOODLION_TOGO_URL}...")
             page.goto(FOODLION_TOGO_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
-            pace(2000)
 
             # 2. Solve Kasada if it fires on the initial load.
-            # Kasada fires async (2-5s after networkidle) — wait for search bar
-            # to confirm the page is actually accessible before checking session state.
-            search_visible = False
-            try:
-                page.locator(SEL_SEARCH[0]).wait_for(state="visible", timeout=5000)
-                search_visible = True
-            except PlaywrightTimeout:
-                pass
-            if not search_visible:
-                log("Search bar not visible after load — Kasada may have fired, checking...")
+            # Kasada fires ~2–5s after page load. The search bar briefly appears
+            # before Kasada overlays it, so wait_for(visible) returns immediately
+            # and misses the challenge. Wait 7s before checking.
+            log("Waiting for Kasada async fire window (7s)...")
+            pace(7000)
+
             state = detect_session_state(page)
             if state == "kasada_challenge":
                 log("Kasada on initial load — calling CapSolver...")
@@ -721,33 +716,57 @@ def detect_session_state(page: Page) -> str:
     Both cases require running: python3 cart_builder/cart.py --login
     """
     url = page.url.lower()
+    title = page.title()
+    log(f"  Session check: url={page.url!r} title={title!r}")
 
     # Login redirect — session cookie gone, Food Lion sent us to a sign-in page.
     if any(kw in url for kw in ("login", "signin", "sign-in", "/account")):
-        log(f"  Session check: login redirect detected ({page.url})")
+        log(f"  Session check: login redirect detected")
         return "login_required"
 
-    # Kasada challenge — bot-detection page loaded at the original URL.
-    # data-kpsdk-v is the Kasada SDK version attribute injected on challenge pages.
+    # Check all frames for Kasada-hosted challenge URLs (cross-origin iframe variant).
+    try:
+        for frame in page.frames:
+            furl = frame.url.lower()
+            if any(kw in furl for kw in ("kasada", "kpsdk", "challenge")):
+                log(f"  Session check: Kasada frame URL detected ({frame.url})")
+                return "kasada_challenge"
+    except Exception:
+        pass
+
+    # Kasada DOM attributes injected on challenge pages (older/API variant).
     try:
         if page.locator('[data-kpsdk-v], #kp-captcha').count() > 0:
-            log("  Session check: Kasada challenge element detected")
+            log("  Session check: Kasada DOM attribute detected")
             return "kasada_challenge"
     except Exception:
         pass
 
-    title = page.title().lower()
-    if any(kw in title for kw in ("just a moment", "please wait", "checking your browser", "enable javascript", "verification required")):
-        log(f"  Session check: challenge-like title: {page.title()!r}")
+    # Challenge-like title keywords.
+    if any(kw in title.lower() for kw in ("just a moment", "please wait", "checking your browser", "enable javascript", "verification required")):
+        log(f"  Session check: challenge-like title detected")
         return "kasada_challenge"
 
-    # Kasada "Verification Required" page — different from the slider; shows
-    # image/audio icons + RETRY button. Detected by page body text since the
-    # title and DOM attributes don't expose any Kasada-specific identifiers.
+    # Body text detection — use page.evaluate for direct DOM access (avoids
+    # Playwright locator timeout issues when Kasada replaces the SPA content).
     try:
-        body = page.locator("body").inner_text(timeout=2000).lower()
+        body = page.evaluate("document.body.innerText").lower()
+        log(f"  Session check: body[:150]={body[:150]!r}")
         if "verification required" in body and "unusual activity" in body:
-            log("  Session check: Kasada 'Verification Required' page detected")
+            log("  Session check: Kasada 'Verification Required' body text detected")
+            return "kasada_challenge"
+        # Kasada slider variant: "Slide right to secure your access"
+        if "slide right to secure" in body or "slide to verify" in body:
+            log("  Session check: Kasada slider body text detected")
+            return "kasada_challenge"
+    except Exception as e:
+        log(f"  Session check: body eval failed: {e}")
+
+    # Search bar visibility — final gate. After a long wait, the search bar must
+    # be visible on a valid store page. Absence strongly indicates a challenge overlay.
+    try:
+        if not page.locator(SEL_SEARCH[0]).is_visible():
+            log("  Session check: search bar not visible — suspected challenge")
             return "kasada_challenge"
     except Exception:
         pass
@@ -791,11 +810,18 @@ def solve_kasada_challenge(page: Page) -> bool:
 
     _capsolver.api_key = api_key
     try:
-        log("  CapSolver: submitting AntiKasadaTask...")
-        solution = _capsolver.solve({
+        proxy = os.environ.get("CAPSOLVER_PROXY", "")
+        task = {
             "type": "AntiKasadaTask",
             "pageURL": page.url,
-        })
+        }
+        if proxy:
+            task["proxy"] = proxy
+            log(f"  CapSolver: using proxy ({proxy.split('@')[-1] if '@' in proxy else proxy[:20]})")
+        else:
+            log("  CapSolver: CAPSOLVER_PROXY not set — trying without proxy (may fail)")
+        log("  CapSolver: submitting AntiKasadaTask...")
+        solution = _capsolver.solve(task)
         log(f"  CapSolver: solution keys → {list(solution.keys()) if isinstance(solution, dict) else type(solution)}")
 
         if isinstance(solution, dict):
@@ -972,6 +998,10 @@ def add_item_to_cart(page: Page, item: dict) -> tuple[bool, Optional[str]]:
     # Fill search input
     filled = try_fill(page, SEL_SEARCH, search_term)
     if not filled:
+        # Search bar gone — Kasada may have fired. Check before flagging per-item.
+        if detect_session_state(page) == "kasada_challenge":
+            log(f"    KASADA DETECTED: search bar overlaid by challenge page")
+            return False, "kasada_challenge"
         reason = f"Could not find search bar for '{search_term}'"
         log(f"    FLAGGED: {reason}")
         return False, reason
@@ -1363,12 +1393,16 @@ def run_build_cart(payload: dict) -> dict:
         try:
             # 1. Navigate to Food Lion To Go
             navigate_to_store(page, store_name)
+
+            # Give Kasada's async JS time to fire and overlay the page before checking
+            # session state. Food Lion's SPA renders the search bar before Kasada fires
+            # (~2–5s later) — without this wait, detect_session_state() sees the
+            # pre-challenge page and returns "valid" prematurely.
+            log("Waiting for Kasada async fire window (6s)...")
+            pace(6000)
             _debug_screenshot(page, debug_dir, "01_store_loaded.png")
 
             # 1b. Verify session is still valid — catch Kasada/login issues early.
-            # Kasada is injected by JS and can fire a few seconds after networkidle,
-            # so we also verify the search bar is actually accessible before proceeding.
-            # If it's not visible, we wait and re-check to catch the async Kasada fire.
             def _handle_session_state(state: str) -> str:
                 if state == "kasada_challenge":
                     log("Kasada challenge detected — attempting CapSolver auto-solve...")
@@ -1379,21 +1413,6 @@ def run_build_cart(payload: dict) -> dict:
                 return state
 
             session_state = _handle_session_state(detect_session_state(page))
-
-            if session_state == "valid":
-                # Confirm the search bar is actually interactable — Kasada fires
-                # async (2-5s after networkidle) and overlays the page. A DOM count
-                # check passes even when Kasada is covering the element, so we use
-                # wait_for(visible) with a 5s window to catch the async fire.
-                search_visible = False
-                try:
-                    page.locator(SEL_SEARCH[0]).wait_for(state="visible", timeout=5000)
-                    search_visible = True
-                except PlaywrightTimeout:
-                    pass
-                if not search_visible:
-                    log("Search bar not interactable — Kasada may have fired async, re-checking...")
-                    session_state = _handle_session_state(detect_session_state(page))
 
             if session_state != "valid":
                 log(f"Session issue: {session_state} — aborting build, refresh required")
@@ -1428,12 +1447,26 @@ def run_build_cart(payload: dict) -> dict:
             if prev_result["added"]:
                 log(f"  {len(prev_result['added'])}/{len(items)} item(s) added from Previous Purchases")
 
+            # add_from_previous_purchases ends with page.goto(FOODLION_TOGO_URL).
+            # Kasada can fire on that return navigation — re-check before the search
+            # loop so we catch it before timing out on all remaining items.
+            if prev_result["remaining"]:
+                log("Re-checking session state before search loop (3s)...")
+                pace(3000)
+                post_pp_state = _handle_session_state(detect_session_state(page))
+                if post_pp_state != "valid":
+                    log(f"Session issue before search loop: {post_pp_state} — aborting")
+                    return make_output("session_expired", abort_reason=post_pp_state)
+
             # Track item number across PP + search adds; screenshot each successful search add
             item_num = len(prev_result["added"])
             for item in prev_result["remaining"]:
                 pace(STEP_DELAY_MS)
                 success, flagged_reason = add_item_to_cart(page, item)
                 if not success:
+                    if flagged_reason == "kasada_challenge":
+                        log("Kasada detected mid-search — aborting to send session alert")
+                        return make_output("session_expired", abort_reason="kasada_challenge")
                     flagged_items.append(flagged_reason or item["search_term"])
                 else:
                     item_num += 1
