@@ -47,7 +47,7 @@ INPUT_SCHEMA (stdin, JSON):
 
 OUTPUT_SCHEMA (stdout, JSON):
   {
-    "status": "cart_built" | "aborted" | "session_expired",
+    "status": "cart_built" | "aborted" | "session_expired" | "login_failed",
     "abort_reason": str | null,          # set when status == "aborted"
     "est_total": float | null,
     "cart_total": float | null,
@@ -83,6 +83,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
 import shutil
 import sys
@@ -126,6 +127,12 @@ AUTH_EXPECTED_DOMAIN = "foodlion.com"
 
 AUTH_STATE_PATH = Path("data/playwright_state.json")
 SCREENSHOT_DIR = Path("data/cart_screenshots")
+
+# IPC state files for Telegram 2FA integration (Path A of Seamless Login Integration).
+# cart.py writes cart_state.json; Ruby (serve bot) reads it and sends Telegram prompts.
+# Ruby writes cart_input.json; cart.py reads it to get the 2FA code.
+CART_STATE_PATH = Path("data/cart_state.json")
+CART_INPUT_PATH = Path("data/cart_input.json")
 
 # Human-like pacing delays (milliseconds). These reduce bot-detection risk on
 # a site that wasn't built to be automated — see spec section 9.7.
@@ -284,6 +291,18 @@ SEL_LOGIN_SUBMIT = [
     'button:has-text("Sign In")',
     'button:has-text("Log In")',
     'button:has-text("Login")',
+]
+
+# Kasada slider elements — used by _try_kasada_slider() in Path A automated solving.
+# These selectors target the draggable handle inside the Kasada challenge overlay.
+# Tried in order; discovery via probe script recommended if all fail.
+SEL_KASADA_SLIDER = [
+    '[class*="kpsdk-slider"]',
+    '[class*="slider-container"] [class*="drag"]',
+    '[class*="challenge"] [class*="slider"]',
+    '[data-kpsdk] [role="slider"]',
+    '[class*="slider-handle"]',
+    '[class*="drag-handle"]',
 ]
 
 # Navigation link to Food Lion's Past Purchases page (top nav bar).
@@ -455,6 +474,239 @@ def _rolling_cleanup_debug_dirs() -> None:
             log(f"  [debug] Could not prune {oldest.name}: {exc}")
 
 
+# ─── State-file IPC helpers (Telegram 2FA integration) ───────────────────────
+
+def _write_cart_state(state: dict) -> None:
+    """Write an IPC event to data/cart_state.json for the Ruby serve bot to read."""
+    try:
+        CART_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CART_STATE_PATH.write_text(json.dumps(state))
+    except Exception as e:
+        log(f"  [state] write failed: {e}")
+
+
+def _clear_cart_state() -> None:
+    """Delete both IPC state files after login completes or fails."""
+    for p in (CART_STATE_PATH, CART_INPUT_PATH):
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _poll_2fa_code(timeout_secs: int = 300) -> Optional[str]:
+    """
+    Poll data/cart_input.json for a 2FA code written by the Ruby serve bot.
+    Returns the 6-digit code string on success, or None on timeout.
+    Deletes the input file after reading so the bot knows the code was consumed.
+    """
+    deadline = time.time() + timeout_secs
+    while time.time() < deadline:
+        if CART_INPUT_PATH.exists():
+            try:
+                data = json.loads(CART_INPUT_PATH.read_text())
+                if data.get("type") == "2fa_code" and data.get("code"):
+                    try:
+                        CART_INPUT_PATH.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    return str(data["code"])
+            except Exception:
+                pass
+        time.sleep(2)
+    return None
+
+
+# ─── Kasada slider automation (Path A) ───────────────────────────────────────
+
+def _try_kasada_slider(page: Page) -> bool:
+    """
+    Attempt to automate the Kasada slider challenge using Playwright mouse simulation.
+
+    Uses smoothstep easing with random micro-jitter to mimic human drag behaviour.
+    Returns True if detect_session_state() reports "valid" after the drag, False otherwise.
+    This is Path A of the Seamless Login Integration spec — no infrastructure changes needed.
+    """
+    log("  Kasada slider: attempting automated drag (Path A)...")
+
+    for sel in SEL_KASADA_SLIDER:
+        try:
+            el = page.locator(sel).first
+            if not el.is_visible(timeout=2000):
+                continue
+            bbox = el.bounding_box()
+            if not bbox or bbox["width"] < 10:
+                continue
+
+            start_x = bbox["x"] + random.uniform(3, 8)
+            drag_distance = bbox["width"] - random.uniform(8, 15)
+            y = bbox["y"] + bbox["height"] / 2 + random.uniform(-2, 2)
+            steps = random.randint(20, 30)
+            ms_per_step_min = random.randint(30, 40)
+            ms_per_step_max = random.randint(50, 65)
+
+            log(f"  Kasada slider: dragging {drag_distance:.0f}px in {steps} steps ({sel})")
+            page.mouse.move(start_x + random.uniform(-3, 3), y + random.uniform(-2, 2))
+            page.mouse.down()
+            page.wait_for_timeout(random.randint(80, 180))
+
+            for i in range(1, steps + 1):
+                t = i / steps
+                eased = t * t * (3 - 2 * t)  # smoothstep — ease in-out
+                cx = start_x + eased * drag_distance + random.uniform(-1, 1)
+                cy = y + random.uniform(-1, 1)
+                page.mouse.move(cx, cy)
+                page.wait_for_timeout(random.randint(ms_per_step_min, ms_per_step_max))
+
+            page.mouse.up()
+            pace(2000)  # wait for Kasada to verify the drag
+
+            result = detect_session_state(page)
+            if result == "valid":
+                log("  Kasada slider: challenge cleared ✓")
+                return True
+
+            log(f"  Kasada slider: challenge not cleared after drag (state: {result})")
+            return False  # tried one element; don't retry with a fallback
+
+        except Exception as e:
+            log(f"  Kasada slider: error with {sel}: {e}")
+            continue
+
+    log("  Kasada slider: no slider element found in DOM")
+    return False
+
+
+# ─── Integrated login (Path A — called from run_build_cart) ──────────────────
+
+def _integrated_login(page: Page, context=None) -> bool:
+    """
+    Handle login / Kasada challenge within an existing browser session.
+
+    Called by run_build_cart() when detect_session_state() is not "valid".
+    Uses state-file IPC (cart_state.json / cart_input.json) for 2FA so the
+    Ruby Telegram bot can prompt Bailey without requiring a terminal.
+
+    Returns True on success, False on any unrecoverable failure.
+    On failure, writes {"event": "slider_failed"} to cart_state.json so the
+    serve bot can notify Bailey to use Path B (noVNC) or run --login manually.
+    """
+    username = os.environ.get("FOODLION_USERNAME", "")
+    password = os.environ.get("FOODLION_PASSWORD", "")
+
+    state = detect_session_state(page)
+
+    # Step 1: Kasada challenge — attempt automated slider
+    if state == "kasada_challenge":
+        log("Kasada challenge — attempting Path A slider automation...")
+        if _try_kasada_slider(page):
+            state = detect_session_state(page)
+        else:
+            log("Slider automation did not clear challenge — Path B (noVNC) required")
+            _write_cart_state({"event": "slider_failed"})
+            return False
+
+    if state == "kasada_challenge":
+        log("Kasada not cleared after slider attempt")
+        _write_cart_state({"event": "slider_failed"})
+        return False
+
+    # Step 2: Login required — fill credentials
+    if state == "login_required":
+        if not username or not password:
+            log("Login required but FOODLION_USERNAME/PASSWORD not set in env")
+            return False
+
+        log("Login required — filling credentials...")
+
+        if not try_click(page, SEL_SIGNIN_LINK, timeout=10000):
+            log("  Sign In link not found — may already be on login page")
+        pace(1500)
+
+        # Re-check after click (Kasada can fire on login page)
+        if detect_session_state(page) == "kasada_challenge":
+            if not _try_kasada_slider(page):
+                _write_cart_state({"event": "slider_failed"})
+                return False
+
+        # Fill email
+        if try_fill(page, SEL_EMAIL_INPUT, username, timeout=10000):
+            pace(500)
+            if try_click(page, SEL_LOGIN_CONTINUE, timeout=3000):
+                log("  Two-step flow: clicked Continue")
+                pace(1500)
+                if detect_session_state(page) == "kasada_challenge":
+                    if not _try_kasada_slider(page):
+                        _write_cart_state({"event": "slider_failed"})
+                        return False
+        else:
+            log("  Email input not found")
+
+        # Fill password
+        if not try_fill(page, SEL_PASSWORD_INPUT, password, timeout=8000):
+            log("  Password input not found")
+            return False
+        pace(500)
+
+        # Submit credentials
+        try_click(page, SEL_LOGIN_SUBMIT, timeout=5000)
+        pace(3000)
+
+        # Kasada can fire after credential submission
+        if detect_session_state(page) == "kasada_challenge":
+            if not _try_kasada_slider(page):
+                _write_cart_state({"event": "slider_failed"})
+                return False
+
+        # 2FA — notify Ruby serve bot via state file, poll for code
+        log("Waiting for 2FA code via Telegram IPC (5-minute timeout)...")
+        _write_cart_state({"event": "2fa_needed"})
+
+        code = _poll_2fa_code(timeout_secs=300)
+        if code is None:
+            log("2FA timeout — login failed")
+            _clear_cart_state()
+            return False
+
+        log(f"  2FA code received ({len(code)} digits)")
+
+        # Enter the 2FA code
+        tfa_selectors = [
+            'input[autocomplete="one-time-code"]',
+            'input[name*="code"]',
+            'input[name*="otp"]',
+            'input[id*="code"]',
+            'input[id*="otp"]',
+            'input[placeholder*="code" i]',
+            'input[type="tel"][maxlength="6"]',
+            'input[type="number"]',
+        ]
+        if try_fill(page, tfa_selectors, code, timeout=10000):
+            pace(500)
+            try_click(page, SEL_LOGIN_SUBMIT, timeout=5000)
+            pace(3000)
+        else:
+            log("  2FA input not found — may auto-submit or use different flow")
+
+        _clear_cart_state()
+
+        # Save updated session cookies so future runs skip the credential step
+        if context:
+            try:
+                AUTH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+                context.storage_state(path=str(AUTH_STATE_PATH))
+                log(f"  Session saved to {AUTH_STATE_PATH}")
+            except Exception as e:
+                log(f"  Session save failed (non-fatal): {e}")
+
+        final = detect_session_state(page)
+        log(f"  Login complete — final state: {final}")
+        return final == "valid"
+
+    # Already valid — nothing to do
+    return state == "valid"
+
+
 # ─── Login mode ───────────────────────────────────────────────────────────────
 
 def run_login() -> int:
@@ -501,17 +753,18 @@ def run_login() -> int:
             log(f"Navigating to {FOODLION_TOGO_URL}...")
             page.goto(FOODLION_TOGO_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
 
-            # 2. Solve Kasada if it fires on the initial load.
-            # Kasada fires ~2–5s after page load. The search bar briefly appears
-            # before Kasada overlays it, so wait_for(visible) returns immediately
-            # and misses the challenge. Wait 7s before checking.
+            # 2. Wait for Kasada's async JS to fire, then check and try slider automation.
             log("Waiting for Kasada async fire window (7s)...")
             pace(7000)
 
             state = detect_session_state(page)
             if state == "kasada_challenge":
-                log("Kasada on initial load — calling CapSolver...")
-                solve_kasada_challenge(page)
+                log("Kasada on initial load — attempting slider automation...")
+                if _try_kasada_slider(page):
+                    log("  Slider cleared — proceeding")
+                else:
+                    log("  Slider automation did not work — you may need to solve it manually in the browser")
+                # In standalone --login mode: fall through regardless; user can see browser
 
             # 3. Click Sign In in the nav
             log("Clicking Sign In...")
@@ -519,10 +772,10 @@ def run_login() -> int:
                 log("  Could not find Sign In link — may already be on login page")
             pace(1500)
 
-            # 4. Solve Kasada if it fires after clicking Sign In
+            # 4. Slider check after Sign In click
             if detect_session_state(page) == "kasada_challenge":
-                log("Kasada on login page — calling CapSolver...")
-                solve_kasada_challenge(page)
+                log("Kasada on login page — attempting slider automation...")
+                _try_kasada_slider(page)
 
             # 5. Fill email
             log("Filling email...")
@@ -533,8 +786,8 @@ def run_login() -> int:
                     log("  Two-step flow: clicked Continue")
                     pace(1500)
                     if detect_session_state(page) == "kasada_challenge":
-                        log("  Kasada after email step — calling CapSolver...")
-                        solve_kasada_challenge(page)
+                        log("  Kasada after email step — attempting slider...")
+                        _try_kasada_slider(page)
             else:
                 log("  Email input not found — continuing")
 
@@ -549,12 +802,12 @@ def run_login() -> int:
             try_click(page, SEL_LOGIN_SUBMIT, timeout=5000)
             pace(3000)
 
-            # 8. Solve Kasada if it fires after credential submission
+            # 8. Slider check after submission
             if detect_session_state(page) == "kasada_challenge":
-                log("Kasada after credential submit — calling CapSolver...")
-                solve_kasada_challenge(page)
+                log("Kasada after credential submit — attempting slider...")
+                _try_kasada_slider(page)
 
-            # 9. Wait for 2FA
+            # 9. Wait for 2FA (standalone mode — terminal input)
             log("")
             log("=== 2FA prompt ===")
             log("Enter the code sent to your device, then press Enter here.")
@@ -1381,14 +1634,8 @@ def run_build_cart(payload: dict) -> dict:
     if not items:
         return make_output("aborted", abort_reason="No items provided in cart input")
 
-    if not AUTH_STATE_PATH.exists():
-        return make_output(
-            "aborted",
-            abort_reason=(
-                "No saved auth state found at data/playwright_state.json. "
-                "Run: python3 cart_builder/cart.py --login"
-            ),
-        )
+    # Clean up any stale IPC state files from a previous interrupted run
+    _clear_cart_state()
 
     flagged_items: list[str] = []
     pickup_slot: Optional[str] = None
@@ -1413,21 +1660,29 @@ def run_build_cart(payload: dict) -> dict:
             pace(6000)
             _debug_screenshot(page, debug_dir, "01_store_loaded.png")
 
-            # 1b. Verify session is still valid — catch Kasada/login issues early.
-            def _handle_session_state(state: str) -> str:
-                if state == "kasada_challenge":
-                    log("Kasada challenge detected — attempting CapSolver auto-solve...")
-                    if solve_kasada_challenge(page):
-                        log("  CapSolver solved — continuing build")
-                        return "valid"
-                    log("  CapSolver failed — falling back to manual refresh alert")
-                return state
-
-            session_state = _handle_session_state(detect_session_state(page))
-
+            # 1b. If session isn't valid (Kasada challenge or login redirect), run
+            # integrated login in this same browser session (Path A). This avoids
+            # the double-Kasada problem that occurs when reopening a new session after
+            # standalone login — Kasada bypass state isn't preserved in cookies.
+            session_state = detect_session_state(page)
             if session_state != "valid":
-                log(f"Session issue: {session_state} — aborting build, refresh required")
-                return make_output("session_expired", abort_reason=session_state)
+                log(f"Session not valid ({session_state}) — running integrated login (Path A)...")
+                if not _integrated_login(page, context):
+                    log("Integrated login failed — aborting cart build")
+                    _clear_cart_state()
+                    return make_output("login_failed", abort_reason=session_state)
+
+                # Re-navigate to the store page after login (login changes the URL)
+                log("Login complete — re-navigating to store for cart build...")
+                navigate_to_store(page, store_name)
+                pace(2000)
+                _debug_screenshot(page, debug_dir, "01b_post_login.png")
+
+                post_login_state = detect_session_state(page)
+                if post_login_state != "valid":
+                    log(f"Post-login session check failed ({post_login_state}) — aborting")
+                    _clear_cart_state()
+                    return make_output("login_failed", abort_reason=f"post_login_{post_login_state}")
 
             # 1c. Clear any items left from a previous run before adding fresh
             clear_cart(page)
@@ -1464,10 +1719,11 @@ def run_build_cart(payload: dict) -> dict:
             if prev_result["remaining"]:
                 log("Re-checking session state before search loop (3s)...")
                 pace(3000)
-                post_pp_state = _handle_session_state(detect_session_state(page))
+                post_pp_state = detect_session_state(page)
                 if post_pp_state != "valid":
                     log(f"Session issue before search loop: {post_pp_state} — aborting")
-                    return make_output("session_expired", abort_reason=post_pp_state)
+                    _clear_cart_state()
+                    return make_output("login_failed", abort_reason=post_pp_state)
 
             # Track item number across PP + search adds; screenshot each successful search add
             item_num = len(prev_result["added"])
@@ -1476,8 +1732,9 @@ def run_build_cart(payload: dict) -> dict:
                 success, flagged_reason = add_item_to_cart(page, item)
                 if not success:
                     if flagged_reason == "kasada_challenge":
-                        log("Kasada detected mid-search — aborting to send session alert")
-                        return make_output("session_expired", abort_reason="kasada_challenge")
+                        log("Kasada detected mid-search — aborting")
+                        _clear_cart_state()
+                        return make_output("login_failed", abort_reason="kasada_mid_search")
                     flagged_items.append(flagged_reason or item["search_term"])
                 else:
                     item_num += 1
@@ -1504,6 +1761,7 @@ def run_build_cart(payload: dict) -> dict:
 
         except Exception as exc:
             log(f"Unexpected error during cart build: {exc}")
+            _clear_cart_state()
             try:
                 page.screenshot(
                     path=str(SCREENSHOT_DIR / f"{run_key}_error.png"),

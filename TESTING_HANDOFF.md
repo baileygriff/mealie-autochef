@@ -318,27 +318,59 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
 
-### ⚡ Start here — Seamless Login Integration (twenty-seventh session left-off point)
+### ⚡ Start here — Seamless Login Integration Path A live test (twenty-eighth session left-off point)
 
-Automated solver services (CapSolver, 2captcha) are not viable for Kasada. The plan is now
-to make login a seamless part of every `build-cart` run, integrated through Telegram.
-Full spec: [docs/features/improvement_login_integration.md](docs/features/improvement_login_integration.md)
+Path A is fully implemented (twenty-eighth session). **Next action: live test it.**
 
-**Path A (try first — no infrastructure changes):**
-1. `run_build_cart()` always calls `run_login()` at the start
-2. `run_login()` attempts to automate the Kasada slider with Playwright mouse simulation (smoothstep easing, human-like timing)
-3. 2FA code collected via Telegram: cart.py writes to `data/cart_state.json`, Ruby polls + sends Telegram prompt, Bailey replies with code, Ruby writes to `data/cart_input.json`, cart.py reads and enters it
-4. If slider automation passes → fully automated except for typing the 2FA code
+```bash
+bundle exec ruby main.rb serve
+# In Telegram: /shop
+# Watch for Kasada slider attempt in debug screenshots (data/cart_screenshots/)
+# If 2FA prompt appears in Telegram → reply with 6-digit code
+```
 
-**Path B (if Path A slider fails — requires Infra 12 first):**
+**Revert instructions (if Path A fails badly and needs to be removed):**
+
+All Path A changes live in a single commit. After committing this session:
+
+```bash
+# Option 1: undo the commit but keep changes as edits (safest — lets you inspect before discarding)
+git reset HEAD~1
+
+# Option 2: discard the commit and all changes entirely
+git reset --hard HEAD~1
+
+# Option 3: create a revert commit (cleanest for shared history)
+git revert HEAD
+```
+
+Before the commit is made, `git restore .` discards all uncommitted changes.
+
+The three modified files are: `cart_builder/cart.py`, `lib/autochef/notify.rb`, `main.rb`.
+
+---
+
+**Path A architecture (implemented twenty-eighth session):**
+
+`_integrated_login(page, context)` runs within the already-open Playwright browser context
+inside `run_build_cart()` — the login and cart build share one session so Kasada bypass
+state is preserved. Key detail: Kasada is NOT preserved in `playwright_state.json`, so a
+separate login session followed by a new build session would hit Kasada twice. The integrated
+approach avoids this.
+
+IPC: cart.py writes `data/cart_state.json` → rufus-scheduler polls every 2s →
+`check_cart_build_state` sends Telegram prompt → Bailey types 6-digit code →
+Ruby writes `data/cart_input.json` → `_poll_2fa_code()` reads it → enters the code.
+
+New status `login_failed` returned when integrated login cannot complete (slider timing
+out, 2FA timeout, credential failure). Handled in `main.rb cmd_build_cart` and sent via
+`send_login_failed_alert` Telegram message.
+
+**Path B (if Path A slider fails consistently — requires Infra 12 first):**
 1. When slider can't be automated, bot sends Telegram: `"Kasada challenge — solve it here: http://192.168.1.64:6080"`
 2. Bailey opens noVNC in phone browser, drags slider with finger
 3. Cart.py polls for search bar visibility → detects completion → continues to 2FA (same as Path A)
 4. Requires: Infra 12 (Xvfb) + x11vnc + noVNC in Docker container
-
-**Start with Path A implementation.** The slider automation is a one-shot attempt — if it
-works, no infrastructure changes are needed. If it consistently fails, do Infra 12 first
-(which is already planned for Docker deploy anyway), then add the noVNC pieces.
 
 ---
 
@@ -366,6 +398,15 @@ works, no infrastructure changes are needed. If it consistently fails, do Infra 
 13. Docker Deployment on Unraid (depends on Xvfb) — [spec](docs/features/infra_13_docker_deploy.md)
 14. Uptime Kuma push monitor — [spec](docs/features/infra_14_uptime_kuma.md)
 15. MCP Setup — [spec](docs/features/infra_15_mcp.md)
+
+### Added this session (twenty-eighth)
+- ✓ **Seamless Login Integration — Path A implemented** — `_integrated_login(page, context)` added to `cart.py`; runs within `run_build_cart()`'s existing Playwright session so Kasada bypass state is not lost between login and cart build. Kasada slider automated via smoothstep mouse simulation (`_try_kasada_slider`). 2FA collected via IPC state files: cart.py → `data/cart_state.json` → rufus-scheduler polls every 2s → Telegram prompt → Bailey replies → Ruby writes `data/cart_input.json` → cart.py reads and enters code.
+- ✓ **New cart.py exports** — `CART_STATE_PATH`, `CART_INPUT_PATH`, `SEL_KASADA_SLIDER`, `_write_cart_state`, `_clear_cart_state`, `_poll_2fa_code`, `_try_kasada_slider`, `_integrated_login`. `run_login()` standalone mode updated to use `_try_kasada_slider` (replaces CapSolver calls). `run_build_cart()` no longer requires `playwright_state.json`; `_clear_cart_state()` called at start and in except block.
+- ✓ **New status `login_failed`** — returned when integrated login can't complete. `main.rb cmd_build_cart` handles it: logs reason + sends `send_login_failed_alert` Telegram message with "Retry Cart Build" inline button. `session_expired` kept for mid-build Kasada detection.
+- ✓ **`notify.rb` additions** — `CART_STATE_FILE`, `CART_INPUT_FILE`, `PYTHON_BIN` constants; `check_cart_build_state` public method (reads state file, handles `2fa_needed` + `slider_failed` events); `send_login_failed_alert` method; `waiting_2fa_code` state handler in `handle_state_input`; `/login` command + `cmd_login` method; 2FA reply hint in help text.
+- ✓ **2s scheduler in `cmd_serve`** — `scheduler.every '2s'` calls `notifier.check_cart_build_state` to detect 2FA and slider-failure events during cart builds.
+- ✓ **RSpec: 50/50 green** — no Ruby regressions. Python module smoke-tested: all new exports present.
+- ⏳ **Live test needed** — Path A has not been run against Food Lion yet. Next session: `bundle exec ruby main.rb serve` → `/shop` → observe debug screenshots in `data/cart_screenshots/`.
 
 ### Added this session (twenty-seventh)
 - ✓ **Proxy verified** — tinyproxy on Unraid at `70.131.45.67:8890`; `curl --proxy` returns `70.131.45.67` ✅; `CAPSOLVER_PROXY` set in `.env`.

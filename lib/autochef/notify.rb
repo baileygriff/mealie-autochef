@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'json'
 require 'telegram/bot'
 require 'date'
 require_relative 'models/plan_history'
@@ -27,6 +28,14 @@ module Autochef
   #   @pending_states[chat_id] = { action: :waiting_note, plan_id: 123, message_id: 456 }
   class Notifier
     MAX_CALLBACK_DATA_BYTES = 64  # Telegram hard limit
+
+    # IPC state files shared with cart.py for Telegram 2FA integration (Path A).
+    # cart.py writes CART_STATE_FILE; serve bot reads it and prompts Bailey.
+    # serve bot writes CART_INPUT_FILE; cart.py reads it to get the 2FA code.
+    _root = File.expand_path('../..', __dir__)
+    CART_STATE_FILE = File.join(_root, 'data', 'cart_state.json')
+    CART_INPUT_FILE = File.join(_root, 'data', 'cart_input.json')
+    PYTHON_BIN      = ENV.fetch('CART_BUILDER_PYTHON', 'python3')
 
     # One-shot class method: send a crash alert without a polling loop.
     # Uses the Telegram::Bot::Client in non-polling mode (just an HTTP POST).
@@ -192,6 +201,82 @@ module Autochef
                            reply_markup: keyboard, parse_mode: 'Markdown')
     end
 
+    # Send a Telegram alert when login failed (slider not automated, 2FA timeout, etc.)
+    def send_login_failed_alert(reason)
+      text = [
+        "⛔ *Cart build failed — login unsuccessful*",
+        "",
+        "Reason: #{reason}",
+        "",
+        "To fix: tap the button below to try again, or run manually:",
+        "`source .venv/bin/activate && python3 cart_builder/cart.py --login`",
+      ].join("\n")
+
+      keyboard = Telegram::Bot::Types::InlineKeyboardMarkup.new(
+        inline_keyboard: [[
+          Telegram::Bot::Types::InlineKeyboardButton.new(
+            text: '🔄 Retry Cart Build', callback_data: 'session_refresh'
+          )
+        ]]
+      )
+      bot_api.send_message(chat_id: @chat_id, text: text,
+                           reply_markup: keyboard, parse_mode: 'Markdown')
+    end
+
+    # Called by the rufus-scheduler every 2s during `serve` to detect 2FA IPC events
+    # written by cart.py. When cart.py writes {"event": "2fa_needed"}, this method
+    # sends a Telegram prompt and sets the pending state so Bailey's next message
+    # is treated as the 2FA code.
+    def check_cart_build_state
+      unless File.exist?(CART_STATE_FILE)
+        @slider_failure_notified = false
+        return
+      end
+
+      state = JSON.parse(File.read(CART_STATE_FILE)) rescue nil
+      return unless state.is_a?(Hash)
+
+      chat_id_int = @chat_id.to_i
+
+      case state['event']
+      when '2fa_needed'
+        return if @pending_states[chat_id_int]&.dig(:action) == :waiting_2fa_code
+
+        @pending_states[chat_id_int] = { action: :waiting_2fa_code }
+        bot_api.send_message(
+          chat_id:    @chat_id,
+          text:       "🔐 *Food Lion 2FA needed*\n\nReply with your 6-digit verification code:",
+          parse_mode: 'Markdown'
+        )
+
+      when 'slider_failed'
+        @slider_failure_notified ||= false
+        return if @slider_failure_notified
+
+        @slider_failure_notified = true
+        bot_api.send_message(
+          chat_id:    @chat_id,
+          text:       [
+            "⚠️ *Kasada slider could not be automated*",
+            "",
+            "Path A (automated drag) didn't work this time.",
+            "Use `/login` to open the browser and solve it manually,",
+            "then tap *Retry Cart Build* to rebuild.",
+          ].join("\n"),
+          reply_markup: Telegram::Bot::Types::InlineKeyboardMarkup.new(
+            inline_keyboard: [[
+              Telegram::Bot::Types::InlineKeyboardButton.new(
+                text: '🔄 Retry Cart Build', callback_data: 'session_refresh'
+              )
+            ]]
+          ),
+          parse_mode: 'Markdown'
+        )
+      end
+    rescue StandardError => e
+      warn "check_cart_build_state error: #{e.message}"
+    end
+
     # -------------------------------------------------------------------------
     # Reminder notifications (Phase 6) — called by Reminders scheduler jobs
     # -------------------------------------------------------------------------
@@ -315,6 +400,7 @@ module Autochef
       when '/servings' then cmd_servings(bot, msg, args)
       when '/shop'     then cmd_shop(bot, msg)
       when '/automap'  then cmd_automap(bot, msg)
+      when '/login'    then cmd_login(bot, msg)
       when '/help'     then cmd_help(bot, msg)
       end
     end
@@ -322,6 +408,20 @@ module Autochef
     # Handles free-text input during a multi-turn flow (e.g. note for regenerate).
     def handle_state_input(bot, msg, state)
       case state[:action]
+      when :waiting_2fa_code
+        code = msg.text.to_s.strip
+        unless code.match?(/\A\d{6}\z/)
+          reply(bot, msg.chat.id, "That doesn't look like a 6-digit code — reply with just the numbers (e.g. 123456).")
+          return
+        end
+        @pending_states.delete(msg.chat.id)
+        begin
+          File.write(CART_INPUT_FILE, JSON.generate({ 'type' => '2fa_code', 'code' => code }))
+          reply(bot, msg.chat.id, "Code received ✓ — entering it now...")
+        rescue StandardError => e
+          reply(bot, msg.chat.id, "Failed to pass code to cart builder: #{e.message}")
+        end
+
       when :waiting_note
         note_text = msg.text.to_s.strip
         @pending_states.delete(msg.chat.id)
@@ -975,6 +1075,21 @@ module Autochef
       end
     end
 
+    def cmd_login(bot, msg)
+      reply(bot, msg.chat.id,
+            "Opening Food Lion login browser — I'll prompt you for 2FA code when needed.\n\n" \
+            "_Note: the browser opens on the Mac running AutoChef. " \
+            "If running headlessly on Unraid, use Path B (noVNC) instead._",
+            parse_mode: 'Markdown')
+      project_root = File.expand_path('../..', __dir__)
+      Thread.new do
+        system(PYTHON_BIN, "#{project_root}/cart_builder/cart.py", '--login',
+               chdir: project_root)
+      rescue StandardError => e
+        warn "cmd_login background thread error: #{e.message}"
+      end
+    end
+
     def cmd_help(bot, msg)
       text = <<~HELP
         *Mealie AutoChef — Bot Commands*
@@ -984,12 +1099,14 @@ module Autochef
         */remove* <id> — remove a manual addition
         */servings* <day> <n> — change servings for a meal (e.g. `/servings Mon 4`)
         */shop* — rebuild the Food Lion cart (runs build-cart --force)
+        */login* — open Food Lion login browser (for manual Kasada/2FA when auto-solve fails)
         */automap* — LLM-map unmapped ingredients in the shopping list
         */staples list* — show recurring staples
         */staples add* <name> <cadence> — add a staple (cadence: `every_order`, `every_2_orders`, `every_14_days`)
         */staples remove* <id> — deactivate a staple
 
         _Approval buttons appear when a plan draft is sent._
+        _Reply with a 6-digit code when prompted for Food Lion 2FA._
       HELP
       reply(bot, msg.chat.id, text, parse_mode: 'Markdown')
     end

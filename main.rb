@@ -472,6 +472,15 @@ def cmd_serve
   reminders = Autochef::Reminders.new(cfg, notifier: notifier)
   reminders.schedule!(scheduler)
 
+  # Poll cart_state.json every 2s for Telegram 2FA IPC (Path A login integration).
+  # When cart.py writes {"event": "2fa_needed"}, the notifier sends Bailey a prompt
+  # and sets the pending state so his next Telegram message is treated as the code.
+  scheduler.every '2s' do
+    notifier.check_cart_build_state
+  rescue StandardError => e
+    warn "Cart build state poll error: #{e.message}"
+  end
+
   begin
     notifier.run_bot  # blocks until process is killed
   ensure
@@ -805,6 +814,15 @@ def cmd_build_cart(force: false)
                                          skipped_items: skipped_names)
       puts "Telegram notification sent."
     end
+
+  when 'login_failed'
+    reason = result['abort_reason'] || 'login_error'
+    puts "Food Lion login failed (#{reason}) — integrated login (Path A) could not complete."
+    puts "If slider automation failed, run: source .venv/bin/activate && python3 cart_builder/cart.py --login"
+    if cfg.notify.channel == 'telegram' && !cfg.notify.telegram_bot_token.to_s.empty?
+      Autochef::Notifier.new(cfg, mealie_client: client).send_login_failed_alert(reason)
+    end
+    return 1
 
   when 'session_expired'
     reason = result['abort_reason'] || 'session_expired'
