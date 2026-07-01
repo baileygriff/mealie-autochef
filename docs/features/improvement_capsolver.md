@@ -1,10 +1,17 @@
 # Improvement — CapSolver Kasada Auto-solving (Option 2)
 
-> **Status:** Code complete (twenty-third/twenty-fifth sessions). Blocked on proxy setup —
-> tinyproxy on Unraid + router port-forward needed before first live test.
+> **Status (twenty-seventh session):** Proxy setup complete and verified. CapSolver's
+> `AntiKasadaTask` returns `ERROR_TYPE_NOT_SUPPORTED` from their live API — the task type is
+> recognized but has no working service behind it (confirmed with all parameter variants and
+> the latest SDK v1.0.7). CapSolver is not a viable path for Kasada as of 2026-06-30.
 >
-> **Lifecycle:** Once verified end-to-end, remove the Setup sections, fill in actual solve
-> rates, observed API costs, and any Kasada token-injection notes if the field names changed.
+> **Next step:** Try 2captcha's `AntiKasadaTask` as an alternative. The proxy (tinyproxy on
+> Unraid at 70.131.45.67:8890) is working correctly and will be reused. Until auto-solving
+> is confirmed working with an alternative service, Option 1 (Telegram alert) is the live
+> fallback.
+>
+> **Lifecycle:** Once a working service is confirmed, remove the Setup sections, add observed
+> solve rates and actual API costs.
 
 ---
 
@@ -52,16 +59,28 @@ no Kasada support.
 - `_handle_session_state()` in `run_build_cart()` calls CapSolver before falling back to Option 1 ✅
 - `CAPSOLVER_PROXY` env var read in `solve_kasada_challenge()` ✅
 - Kasada detection timing fixed (6s wait before check) ✅ — confirmed working in live run
-- Live test confirmed: CapSolver fires, submits task, fails only because proxy is missing ✅
+- tinyproxy deployed on Unraid at `70.131.45.67:8890` ✅ — confirmed via `curl --proxy ...` returning `70.131.45.67`
+- `CAPSOLVER_PROXY=http://capsolver:...@70.131.45.67:8890` set in `.env` ✅
+- CapSolver `AntiKasadaTask` live-tested with proxy — confirmed `ERROR_TYPE_NOT_SUPPORTED` from API ✅ (not a config error)
+
+## CapSolver is NOT a viable path (as of 2026-06-30)
+
+`AntiKasadaTask` is in CapSolver's Python SDK and returns a different error than fully unknown
+task types, but their live API consistently returns `ERROR_TYPE_NOT_SUPPORTED` with
+`"unable to process task request"` — regardless of proxy, userAgent, or other fields added.
+Tested with SDK v1.0.7, confirmed on the live `https://api.capsolver.com/createTask` endpoint.
+
+CapSolver likely had Kasada support at some point but removed it or made it enterprise-only.
 
 ---
 
-## What's needed to go live
+## What's needed to go live (with 2captcha)
 
-1. tinyproxy running as a Docker container on Unraid
-2. Router port-forward: external port 8888 → Unraid 192.168.1.64:8888
-3. `CAPSOLVER_PROXY` set in `.env`
-4. One `build-cart --force` run to verify end-to-end
+1. Bailey creates a 2captcha account and funds it
+2. `TWO_CAPTCHA_API_KEY` added to `.env`
+3. `twocaptcha>=1.1.0` added to `requirements.txt` and installed
+4. `solve_kasada_challenge()` rewritten (or wrapped) to use 2captcha's API
+5. One `build-cart --force` run to verify end-to-end
 
 ---
 
@@ -238,7 +257,9 @@ When deploying autochef to Unraid via Docker:
 | `cart_builder/cart.py` — `solve_kasada_challenge()` | ✅ implemented |
 | `cart_builder/requirements.txt` — `capsolver>=1.0.0` | ✅ done |
 | `.env` — `CAPSOLVER_API_KEY` | ✅ set |
-| `.env` — `CAPSOLVER_PROXY` | ⏳ set after proxy is up |
-| `.env.example` — `CAPSOLVER_PROXY` | ⏳ add after proxy is up |
-| `docker/tinyproxy.conf` | ⏳ create (Step 1) |
-| `docker/docker-compose.yml` — tinyproxy service | ⏳ add (Step 2) |
+| `.env` — `CAPSOLVER_PROXY` | ✅ set (70.131.45.67:8890) |
+| `.env.example` — `CAPSOLVER_PROXY` | ✅ documented |
+| `docker/tinyproxy.conf` | ✅ created |
+| `docker/docker-compose.yml` — tinyproxy service | ✅ added |
+| CapSolver `AntiKasadaTask` | ❌ ERROR_TYPE_NOT_SUPPORTED from live API |
+| 2captcha `AntiKasadaTask` | ⏳ next option to try |

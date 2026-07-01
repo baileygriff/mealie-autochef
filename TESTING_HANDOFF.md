@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-06-30 (twenty-sixth session)
+## Current state as of 2026-06-30 (twenty-seventh session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -135,8 +135,9 @@ mealie-autochef-ruby/
 | Application Orchestrator Refactor — Section 1 | ✓ | `lib/autochef/errors.rb` — unified error hierarchy; `ConfigError` moved here from config.rb; 50/50 specs green |
 | Cart Builder Package Refactor — Step 2 | ✓ | Python skeleton: `cart_builder/__init__.py`, `base.py` (GroceryProvider ABC + types), `providers/__init__.py`, `tests/__init__.py`, fixture JSON files |
 | Feature 16 — Nutrition Goals & Macro-Aware Planning | 🗂️ | Spec in [docs/features/feature_16_nutrition_goals.md](docs/features/feature_16_nutrition_goals.md) |
-| CapSolver Kasada auto-solving (Option 2) | 🔧 | Detection + CapSolver task submission both confirmed working. Proxy setup documented: `docker/tinyproxy.conf` + compose service added. Blocked on Bailey: deploy tinyproxy, forward port 8888, set `CAPSOLVER_PROXY` in `.env`. See "Start here" in "What's coming next". |
-| Automated login flow (`--login`) | 🔧 | `run_login()` auto-fills credentials; timing fix applied (7s wait); blocked until proxy is set (CapSolver still needed to solve login Kasada) |
+| CapSolver Kasada auto-solving (Option 2) | ✗ | Abandoned. Proxy verified ✅ but `AntiKasadaTask` returns `ERROR_TYPE_NOT_SUPPORTED` from live API. 2captcha doesn't support Kasada. No solver service is viable. |
+| Seamless Login Integration | 🗂️ | Replaces CapSolver. Spec complete — Path A (automated slider + Telegram 2FA IPC) try first; Path B (noVNC, needs Infra 12) as fallback. See [spec](docs/features/improvement_login_integration.md). |
+| Automated login flow (`--login`) | 🔧 | `run_login()` auto-fills credentials; timing fix applied (7s wait); will be integrated into `build-cart` always-on via Login Integration spec |
 | Debug screenshots | ✓ | Per-step screenshots in `data/cart_screenshots/<run_key>/`; rolling 2-run cleanup; `01_store_loaded.png` now captures page state at the Kasada detection point |
 | Cart Builder Package Refactor — Steps 3–6 | 🗂️ | Spec in [docs/features/improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
 | Application Orchestrator Refactor — Sections 2–8 | 🗂️ | Spec in [docs/features/improvement_orchestrator_refactor.md](docs/features/improvement_orchestrator_refactor.md) |
@@ -317,24 +318,27 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
 
-### ⚡ Start here — CapSolver proxy verification (twenty-sixth session left-off point)
+### ⚡ Start here — Seamless Login Integration (twenty-seventh session left-off point)
 
-CapSolver is fully implemented and confirmed to fire correctly. The only remaining step is
-the proxy setup, which requires Bailey to do 4 things on Unraid before the agent can test:
+Automated solver services (CapSolver, 2captcha) are not viable for Kasada. The plan is now
+to make login a seamless part of every `build-cart` run, integrated through Telegram.
+Full spec: [docs/features/improvement_login_integration.md](docs/features/improvement_login_integration.md)
 
-1. Set a real password in `docker/tinyproxy.conf` (replace `CHANGE_THIS_PASSWORD`)
-2. Deploy the tinyproxy Docker container on Unraid (`docker-compose up -d tinyproxy` from `docker/`)
-3. Forward port 8888 → 192.168.1.64:8888 in the router (same process as Mealie/Jellyfin)
-4. Add `CAPSOLVER_PROXY=http://capsolver:PASSWORD@70.131.45.67:8888` to `.env`
+**Path A (try first — no infrastructure changes):**
+1. `run_build_cart()` always calls `run_login()` at the start
+2. `run_login()` attempts to automate the Kasada slider with Playwright mouse simulation (smoothstep easing, human-like timing)
+3. 2FA code collected via Telegram: cart.py writes to `data/cart_state.json`, Ruby polls + sends Telegram prompt, Bailey replies with code, Ruby writes to `data/cart_input.json`, cart.py reads and enters it
+4. If slider automation passes → fully automated except for typing the 2FA code
 
-**Once Bailey confirms those 4 steps are done**, the agent should:
-1. Verify proxy: `curl --proxy "http://capsolver:PASSWORD@70.131.45.67:8888" https://ifconfig.me` → must print `70.131.45.67`
-2. Run `bundle exec ruby main.rb build-cart --force 2>&1`
-3. Look for `CapSolver: challenge cleared successfully` in output
-4. If successful: update `improvement_capsolver.md` status to ✅, remove setup sections, note actual solve rate
-5. If proxy verification fails: check port-forward and container logs (`docker logs autochef-tinyproxy`)
+**Path B (if Path A slider fails — requires Infra 12 first):**
+1. When slider can't be automated, bot sends Telegram: `"Kasada challenge — solve it here: http://192.168.1.64:6080"`
+2. Bailey opens noVNC in phone browser, drags slider with finger
+3. Cart.py polls for search bar visibility → detects completion → continues to 2FA (same as Path A)
+4. Requires: Infra 12 (Xvfb) + x11vnc + noVNC in Docker container
 
-Full setup walkthrough and failure diagnostics: [docs/features/improvement_capsolver.md](docs/features/improvement_capsolver.md)
+**Start with Path A implementation.** The slider automation is a one-shot attempt — if it
+works, no infrastructure changes are needed. If it consistently fails, do Infra 12 first
+(which is already planned for Docker deploy anyway), then add the noVNC pieces.
 
 ---
 
@@ -362,6 +366,15 @@ Full setup walkthrough and failure diagnostics: [docs/features/improvement_capso
 13. Docker Deployment on Unraid (depends on Xvfb) — [spec](docs/features/infra_13_docker_deploy.md)
 14. Uptime Kuma push monitor — [spec](docs/features/infra_14_uptime_kuma.md)
 15. MCP Setup — [spec](docs/features/infra_15_mcp.md)
+
+### Added this session (twenty-seventh)
+- ✓ **Proxy verified** — tinyproxy on Unraid at `70.131.45.67:8890`; `curl --proxy` returns `70.131.45.67` ✅; `CAPSOLVER_PROXY` set in `.env`.
+- ✗ **CapSolver `AntiKasadaTask` not supported** — live API returns `ERROR_TYPE_NOT_SUPPORTED` regardless of proxy, userAgent, or other params; tested with SDK v1.0.7. Proxy setup is valid but CapSolver is abandoned.
+- ✗ **2captcha does not support Kasada** on standard plans (confirmed via their docs: "dynamic polymorphic architecture"). Custom enterprise only.
+- ✗ **Hyper Solutions** viable technically but integration is complex (7-step protocol-level token generation, not drop-in; requires Playwright request interception + per-request POW; Windows Chrome UA requirement conflicts with macOS setup).
+- ✓ **Automated solver services abandoned** — no service provides working, accessible Kasada bypass.
+- ✓ **New plan: Seamless Login Integration** — make login a part of every `build-cart` run, integrated through Telegram. Path A: automated Kasada slider via Playwright mouse simulation + Telegram 2FA IPC. Path B (fallback): noVNC remote browser (depends on Infra 12). Spec in [docs/features/improvement_login_integration.md](docs/features/improvement_login_integration.md).
+- ✓ **Improved CapSolver error logging** — `solve_kasada_challenge()` now logs the actual `errorCode` from CapSolver's JSON response.
 
 ### Added this session (twenty-sixth)
 - ✓ **CapSolver live test confirmed** — ran `build-cart --force`; Kasada detected correctly (timing fix verified); CapSolver fires and submits `AntiKasadaTask`; fails only with `InvalidRequestError: unable to process task request` (proxy missing, as expected). Option 1 fallback fires correctly.

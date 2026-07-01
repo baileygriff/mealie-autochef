@@ -29,7 +29,7 @@ All remaining Feedback / Improvements items. Complete these before any new featu
 
 | Item | Category | Why first |
 |---|---|---|
-| CapSolver Kasada Auto-solving | Feedback | ~30 lines; eliminates manual weekly session refresh |
+| Seamless Login Integration | Feedback | Replaces CapSolver path; always-login-first + automated slider + Telegram 2FA |
 | Cart Builder Package Refactor (Steps 3–6) | Feedback | Enables browser-free Python tests; pre-req for FoodLionProvider isolation |
 | Orchestrator Refactor (Sections 2–8) | Feedback | Per-function LLM model config; injectable notifier; `main.rb` → thin router |
 | ~~Debug Screenshots~~ | ~~Feedback~~ | ~~Low effort; completes the feedback backlog~~ ✅ done |
@@ -87,7 +87,8 @@ Lower priority, blocked on an interview, or deferred until a dependency is ready
 
 | Item | Status | Spec |
 |---|---|---|
-| CapSolver Kasada Auto-solving (Option 2) | 🔧 Code complete + detection timing fixed (twenty-fifth session) — blocked on proxy: tinyproxy on Unraid + router port-forward needed; see spec for full setup steps | [improvement_capsolver.md](docs/features/improvement_capsolver.md) |
+| Seamless Login Integration | 🗂️ Spec complete. Path A: always-login-first + automated Kasada slider + Telegram 2FA IPC. Path B: noVNC fallback (depends on Infra 12). CapSolver/2captcha not viable — solver services don't support Kasada. | [improvement_login_integration.md](docs/features/improvement_login_integration.md) |
+| ~~CapSolver Kasada Auto-solving~~ | ❌ Abandoned — `AntiKasadaTask` not supported in CapSolver live API; 2captcha doesn't support Kasada on standard plans | [improvement_capsolver.md](docs/features/improvement_capsolver.md) |
 | Cart Builder Package Refactor | 🗂️ Complete spec (Step 2 done) | [improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
 | Application Orchestrator Refactor | 🗂️ Complete spec (Section 1 done) | [improvement_orchestrator_refactor.md](docs/features/improvement_orchestrator_refactor.md) |
 

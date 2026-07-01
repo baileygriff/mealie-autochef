@@ -76,7 +76,10 @@
     "rmtree",
     "tinyproxy",
     "vimagick",
-    "squid"
+    "squid",
+    "twocaptcha",
+    "2captcha",
+    "smoothstep"
   ],
   "ignorePaths": [
     "data/**",

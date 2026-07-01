@@ -856,7 +856,18 @@ def solve_kasada_challenge(page: Page) -> bool:
         return False
 
     except Exception as exc:
-        log(f"  CapSolver: solve failed — {exc}")
+        # Surface the CapSolver error code if available (e.g. ERROR_TYPE_NOT_SUPPORTED)
+        err_code = getattr(exc, "json_body", None)
+        if err_code and isinstance(err_code, str):
+            import json as _json
+            try:
+                err_code = _json.loads(err_code).get("errorCode", "")
+            except Exception:
+                err_code = ""
+        if err_code:
+            log(f"  CapSolver: solve failed — {type(exc).__name__}:{err_code} — {exc}")
+        else:
+            log(f"  CapSolver: solve failed — {exc}")
         return False
 
 

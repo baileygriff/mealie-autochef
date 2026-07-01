@@ -4,6 +4,57 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-06-30 (twenty-seventh session)
+
+**Proxy setup verified — tinyproxy on Unraid at port 8890**
+Bailey deployed tinyproxy at `http://capsolver:...@70.131.45.67:8890` (port 8890, not 8888 as
+documented — the actual deployed port). `curl --proxy` confirmed outgoing IP is `70.131.45.67`.
+`CAPSOLVER_PROXY=http://capsolver:...@70.131.45.67:8890` set in `.env`.
+Result: proxy works correctly and CapSolver now receives the proxy in the API call.
+
+**CapSolver `AntiKasadaTask` confirmed NOT supported in live API**
+After proxy setup, ran `build-cart --force`. CapSolver now receives the proxy but the API
+returns `ERROR_TYPE_NOT_SUPPORTED` (`"unable to process task request"`) — the same error as
+without the proxy. Tested directly against `https://api.capsolver.com/createTask`:
+- `AntiKasadaTask` with proxy + userAgent → `ERROR_TYPE_NOT_SUPPORTED` (recognized type, no service)
+- `KasadaTask` / `AntiKasadaTaskProxyLess` → "unsupported captcha type" (unknown types)
+- All parameter variants → same result with SDK v1.0.7 (latest)
+Conclusion: CapSolver removed or gated Kasada support. Not viable as-is.
+
+**Improved CapSolver error logging**
+`solve_kasada_challenge()` exception handler now extracts `errorCode` from CapSolver's
+response JSON (stored in `exc.json_body`) and logs it alongside the exception type. Future
+errors will show e.g. `InvalidRequestError:ERROR_TYPE_NOT_SUPPORTED` instead of just the
+description, making it easier to distinguish "type not supported" from "proxy wrong" from
+"API key invalid".
+File: `cart_builder/cart.py:solve_kasada_challenge()`
+
+**Updated docs: `improvement_capsolver.md`, `TESTING_HANDOFF.md`, `cspell.json`**
+`improvement_capsolver.md` status updated to reflect: proxy verified ✅, CapSolver not viable ❌.
+`cspell.json` added `twocaptcha`, `2captcha`, `smoothstep`.
+
+**Automated solver services research — all dead ends**
+Researched 2captcha and Hyper Solutions as CapSolver alternatives:
+- 2captcha: explicitly states Kasada not supported on standard plans ("dynamic polymorphic architecture"); custom enterprise solutions require contacting them.
+- Hyper Solutions: viable but requires 7-step protocol-level integration (fetch `/fp` → extract script path → fetch `ips.js` → call API → POST to `/tl` → inject cookies → per-request POW). Not drop-in with Playwright; Windows Chrome UA requirement; Playwright request interception needed for every request. Estimated 3–5 days, ~60% confidence.
+- kpsdk-solver (Playwright-specific): archived June 2025, poor Chromium/Linux support.
+Decision: abandon automated solver path entirely.
+
+**New plan: Seamless Login Integration — spec written**
+Decision: make login a seamless part of every `build-cart` run, integrated through Telegram.
+Since Kasada fires on every automated session (not just on expired login cookies), each run
+needs a fresh login. Key finding: `playwright_state.json` saves auth cookies but not Kasada
+bypass — Kasada re-challenges every automated session regardless.
+Path A (try first): `run_build_cart()` always calls `run_login()` first; `run_login()` attempts
+Kasada slider automation via Playwright mouse simulation (smoothstep easing); 2FA code collected
+via Telegram IPC (state files `data/cart_state.json` + `data/cart_input.json`).
+Path B (fallback): noVNC remote browser — bot sends Telegram link to `192.168.1.64:6080`;
+Bailey drags slider on phone; depends on Infra 12 (Xvfb).
+Files: `docs/features/improvement_login_integration.md` (new), `future_enhancements.md`,
+`TESTING_HANDOFF.md`
+
+---
+
 ## Implemented / Fixed — 2026-06-30 (twenty-sixth session)
 
 **CapSolver live end-to-end test — proxy confirmed as the only remaining blocker**
@@ -203,15 +254,14 @@ Three new feature specs written via structured interview with Bailey. No bugs fi
 
 ## Known Issues (not yet fixed)
 
-**CapSolver requires `CAPSOLVER_PROXY` — setup documented, awaiting Bailey to deploy (twenty-sixth session)**
-CapSolver's `AntiKasadaTask` requires a proxy at Bailey's outgoing IP (70.131.45.67) so the
-solve request appears to come from the same IP as the browser. Without it: `InvalidRequestError:
-unable to process task request` (confirmed in live test this session). Full setup is
-documented — `docker/tinyproxy.conf` and the compose service are ready. Bailey needs to:
-(1) replace `CHANGE_THIS_PASSWORD` in `tinyproxy.conf`, (2) deploy the tinyproxy container
-on Unraid, (3) forward router port 8888 → 192.168.1.64:8888, (4) set `CAPSOLVER_PROXY` in
-`.env`. See [docs/features/improvement_capsolver.md](docs/features/improvement_capsolver.md)
-for the full walkthrough and `curl` verification step.
+**Kasada fires on every automated `build-cart` run — login must be integrated (twenty-seventh session)**
+Kasada re-challenges the browser on every new automated session. `playwright_state.json` only
+saves login cookies, not Kasada bypass state. Every `build-cart` invocation hits Kasada before
+it can reach the store. No automated solver service is viable (CapSolver `AntiKasadaTask`
+`ERROR_TYPE_NOT_SUPPORTED`; 2captcha no standard-plan Kasada support; Hyper Solutions too complex
+to integrate with Playwright). Solution: Seamless Login Integration — login always runs first in
+`build-cart`, with Kasada slider automation (Path A) and noVNC fallback (Path B). Spec at
+[docs/features/improvement_login_integration.md](docs/features/improvement_login_integration.md).
 
 For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
 
