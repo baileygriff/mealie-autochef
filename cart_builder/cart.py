@@ -565,8 +565,12 @@ def _try_kasada_slider(page: Page) -> bool:
                     "return p ? p.getBoundingClientRect().width : null; }"
                 )
                 if parent_w and parent_w > bbox["width"] * 1.5:
-                    # Drag from handle center to near the right end of the track
-                    track_width = parent_w - bbox["width"] - random.uniform(5, 12)
+                    # Drag from handle center to the far end of the track. The handle
+                    # can travel at most (parent_w - handle_width) before it hits the
+                    # right edge, which is where sliderTarget sits. Overshoot slightly
+                    # (mouse clamps at the track end) so the handle reliably lands in
+                    # the target zone instead of stopping ~13px short.
+                    track_width = parent_w - bbox["width"] + random.uniform(3, 8)
             except Exception:
                 pass
 

@@ -92,7 +92,7 @@ mealie-autochef-ruby/
 
 ---
 
-## Current state as of 2026-07-01 (twenty-ninth session)
+## Current state as of 2026-07-02 (thirtieth session)
 
 | Step | Status | Notes |
 |---|---|---|
@@ -136,7 +136,8 @@ mealie-autochef-ruby/
 | Cart Builder Package Refactor — Step 2 | ✓ | Python skeleton: `cart_builder/__init__.py`, `base.py` (GroceryProvider ABC + types), `providers/__init__.py`, `tests/__init__.py`, fixture JSON files |
 | Feature 16 — Nutrition Goals & Macro-Aware Planning | 🗂️ | Spec in [docs/features/feature_16_nutrition_goals.md](docs/features/feature_16_nutrition_goals.md) |
 | CapSolver Kasada auto-solving (Option 2) | ✗ | Abandoned. Proxy verified ✅ but `AntiKasadaTask` returns `ERROR_TYPE_NOT_SUPPORTED` from live API. 2captcha doesn't support Kasada. No solver service is viable. |
-| Seamless Login Integration — Path A | 🔧 | Implemented twenty-eighth session. Live-tested twenty-ninth. Slider found ✅ IPC ✅ drag executes ✅ — but DataDome rejects drag (~13px short). Drag distance fix needed. See "Start here" below. |
+| Seamless Login Integration — Path A | ✗ | Drag distance FIXED (thirtieth session): now 221px, dead-on target. **But DataDome still rejects** — behavioral motion detection + greylisted IP (challenge text names IP 70.131.45.67 for "bot activity"). Path A cannot be made reliable from this IP. Abandoned as primary; kept as best-effort first try. |
+| Seamless Login Integration — Path B (noVNC) | 🗂️ | **Chosen path** (thirtieth session). Full implementation plan documented in [improvement_login_integration.md](docs/features/improvement_login_integration.md): `_solve_datadome`/`_wait_for_manual_slider`, `slider_needed`/`slider_cleared` IPC, notify.rb handlers, `novnc_port` config, Docker Xvfb+x11vnc+noVNC infra. Not yet built. |
 | `cart_builder/probe_kasada.py` | ✓ | Diagnostic script — navigates to Food Lion, waits for DataDome challenge, dumps captcha iframe DOM (classes, bounding boxes, selectors). Confirmed `[class="slider"]` handle, `sliderContainer` track, `sliderTarget` zone. |
 | Automated login flow (`--login`) | 🔧 | `run_login()` auto-fills credentials; timing fix applied (7s wait); will be integrated into `build-cart` always-on via Login Integration spec |
 | Debug screenshots | ✓ | Per-step screenshots in `data/cart_screenshots/<run_key>/`; rolling 2-run cleanup; `01_store_loaded.png` now captures page state at the Kasada detection point |
@@ -265,6 +266,8 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **DataDome has two challenge variants.** The default is the slider ("Slide right to secure your access"). After repeated automated attempts from the same IP, DataDome escalates to a hard-block ("Access is temporarily restricted") with no interactive element. ~30 min of idle time restores the slider variant. Run `probe_kasada.py` to detect which variant is active before debugging drag mechanics.
 
+**DataDome rejects the automated slider even with a geometrically perfect drag (thirtieth session).** The drag distance is fixed (221px, dead-on target) but DataDome still refuses to clear — it fingerprints the *motion* (velocity/timing profile), not just the endpoint, and the outgoing IP (70.131.45.67) is greylisted (the challenge text names it for "bot activity"). Human drags from this machine pass; synthetic ones don't. **Don't sink more time into humanizing the automated drag from this IP** — the path forward is Path B (noVNC human-solve), see "Start here". The corrected drag stays as a cheap best-effort first attempt only.
+
 ---
 
 ## What to do when Bailey sends a screenshot
@@ -323,26 +326,34 @@ bundle exec ruby scripts/seed_product_map.rb
 
 **Rule: address feedback and improvements first, then new features.** See [future_enhancements.md](future_enhancements.md) for full specs.
 
-### ⚡ Start here — Fix DataDome slider drag distance (twenty-ninth session left-off point)
+### ⚡ Start here — Build Path B (noVNC human-solve). Path A is done and abandoned.
 
-Path A live test confirmed (twenty-ninth session): slider is found, drag executes, IPC works, Telegram notification arrives. **One bug remaining**: the drag distance calculation falls ~13px short of the target zone, so DataDome rejects the slide.
+**Thirtieth session outcome:** The drag-distance fix was applied and live-verified — the drag is
+now 221px, landing dead-on the target zone. **But DataDome still rejected the slide.** Root cause
+is not distance: it's (1) behavioral motion detection (human drags from this machine pass; the
+synthetic smoothstep drag doesn't) and (2) a greylisted IP — the DataDome challenge text itself
+names `IP 70.131.45.67` for "Automated (bot) activity". Path A cannot be made reliable from this
+IP. **Bailey's decision: pivot to Path B (noVNC human-solve).** The drag fix stays in `cart.py`
+as a cheap best-effort first try, but Path B is the reliable path.
 
-**Fix in `cart_builder/cart.py` — `_try_kasada_slider()`:**
+**Path B is fully planned** — build it from the decided design in
+[improvement_login_integration.md](docs/features/improvement_login_integration.md). Order:
 
-```python
-# Current (wrong — random subtraction makes drag ~209px, landing at ~740px):
-track_width = parent_w - bbox["width"] - random.uniform(5, 12)
+1. **Code side (test locally first — no Docker needed).** Add `_wait_for_manual_slider` +
+   `_solve_datadome` to `cart.py`; refactor `_integrated_login` to use them (replaces the
+   `slider_failed`/abort branches with a human-solve poll). Add `novnc_port` to `WebConfig` +
+   `config.yaml`. Add `slider_needed` / `slider_cleared` cases to `notify.rb`
+   `check_cart_build_state` (noVNC link + "or drag it in the browser"), guarded by
+   `@handled_cart_events`. Verify: `bundle exec rspec` green + `python3 -c "import cart_builder.cart"`.
+   Then live-test locally: `serve` + `build-cart --force`, drag the slider in the visible Chrome
+   window when the Telegram prompt arrives, confirm the run continues. (Run `probe_kasada.py`
+   first to confirm the slider variant is showing, not the hard-block.)
+2. **Infra 12 (Xvfb)** → **Path B infra (x11vnc + noVNC, port 6080)** → **Infra 13 (Docker deploy)**.
+   These are Unraid-side and Bailey-verified.
 
-# Fix (slight overshoot — drags ~217–222px, landing at ~753px where sliderTarget sits):
-track_width = parent_w - bbox["width"] + random.uniform(3, 8)
-```
-
-**Context:** Handle center is at ~531px viewport. `sliderTarget` center is at ~753px. Correct drag = 222px. Current code produces ~209px (13px short). Changing the subtraction to an addition of 3–8px gives ~217–225px, landing reliably in the target zone.
-
-**After fixing:** Run `bundle exec ruby main.rb serve`, trigger a cart build (e.g. `bundle exec ruby main.rb build-cart --force`), watch the slider drag in the browser window. Success = DataDome iframe disappears and cart build proceeds. If still rejected, inspect `data/cart_screenshots/` for `01_store_loaded.png` and increase the overshoot.
-
-**If Path A consistently fails (e.g. DataDome always rejects even with correct distance):**
-Consider Path B — noVNC remote browser. Requires Infra 12 (Xvfb). Bot sends `http://192.168.1.64:6080` Telegram link; Bailey drags slider on phone. See spec: `docs/features/improvement_login_integration.md`.
+**Key insight:** the code-side poll loop is environment-agnostic — a human dragging the visible
+Chrome window (local Mac) and a human dragging via noVNC (Unraid phone) are the same code path.
+So the whole interaction can be built and tested locally before any Docker work.
 
 ---
 
@@ -403,6 +414,13 @@ out, 2FA timeout, credential failure). Handled in `main.rb cmd_build_cart` and s
 - ✓ **2s scheduler in `cmd_serve`** — `scheduler.every '2s'` calls `notifier.check_cart_build_state` to detect 2FA and slider-failure events during cart builds.
 - ✓ **RSpec: 50/50 green** — no Ruby regressions. Python module smoke-tested: all new exports present.
 - ✓ **Live test completed (twenty-ninth session)** — slider found, drag executes, IPC verified, Telegram notification received. One bug: drag falls ~13px short (see "Start here" above for fix).
+
+### Added this session (thirtieth)
+- ✓ **Drag-distance fix applied + live-verified** — `_try_kasada_slider()` `track_width` changed from `- random.uniform(5, 12)` to `+ random.uniform(3, 8)`. Live `build-cart --force` confirmed: `dragging 221px in 22 steps` — handle center lands at ~752.5px, dead-on the target-zone center (~753.5px). The distance bug is fixed.
+- ✗ **Path A confirmed insufficient (distance was necessary, not sufficient)** — despite the corrected 221px drag, DataDome still returned `kasada_challenge` (same `initialCid` persisted). Two causes: (1) behavioral motion detection — human drags from this machine pass, the synthetic drag doesn't; (2) greylisted IP — the DataDome challenge text explicitly names `IP 70.131.45.67` for "Automated (bot) activity". Path A can't be made reliable from this IP.
+- ✓ **`probe_kasada.py` re-run confirmed live slider variant** — `sliderContainer` (500, 351.5, 280×40) matches; screenshot shows the "Verification Required" slider with handle (left, dark arrow) and target zone (right, faint arrow). Used to confirm the slider variant was active before spending a drag attempt.
+- ✓ **Decision: pivot to Path B (noVNC human-solve)** — Bailey chose Path B over further Path A humanization. Human drags pass even from the greylisted IP, so a human-in-the-loop solve is reliable.
+- 🗂️ **Path B fully planned in the spec** — [improvement_login_integration.md](docs/features/improvement_login_integration.md) now documents: Path A live-test findings, the environment-agnostic code design (`_solve_datadome` + `_wait_for_manual_slider`), `slider_needed`/`slider_cleared` IPC events, `notify.rb` `check_cart_build_state` handlers, `novnc_port` config, Docker Xvfb+x11vnc+noVNC infra, and an ordered "build the code side locally first" implementation plan. **No Path B code written this session — planning/documentation only** (Bailey's direction).
 
 ### Added this session (twenty-ninth)
 - ✓ **DataDome identified as challenge vendor** — Not Kasada. Challenge served from `geo.captcha-delivery.com` cross-origin iframe. All detection code, log messages, and selector comments updated to reference DataDome.

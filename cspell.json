@@ -87,7 +87,10 @@
     "sliderContainer",
     "sliderTarget",
     "noVNC",
-    "novnc"
+    "novnc",
+    "greylisted",
+    "Greylisted",
+    "x11vnc"
   ],
   "ignorePaths": [
     "data/**",

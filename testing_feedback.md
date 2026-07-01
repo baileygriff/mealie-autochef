@@ -4,6 +4,38 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-07-02 (thirtieth session)
+
+**DataDome slider drag distance fixed + live-verified (Path A now geometrically correct)**
+`_try_kasada_slider()` `track_width` changed from `parent_w - bbox["width"] - random.uniform(5, 12)`
+(≈209px, 13px short) to `parent_w - bbox["width"] + random.uniform(3, 8)`. A live `build-cart --force`
+run confirmed: `Kasada slider: dragging 221px in 22 steps ([class="slider"])` — handle center lands
+at ~752.5px, dead-on the target-zone center (~753.5px). The distance bug from the 29th session is
+resolved.
+File: `cart_builder/cart.py:_try_kasada_slider()`
+
+**Path A confirmed insufficient — DataDome rejects the automated drag anyway**
+Despite the corrected 221px drag, `detect_session_state()` still returned `kasada_challenge` after
+the drag (the same DataDome `initialCid` persisted, so the challenge was genuinely unsolved — not a
+detection false-positive). Distance was necessary but not sufficient. Two root causes:
+1. **Behavioral motion detection.** DataDome fingerprints the drag trajectory (velocity/timing),
+   not just the endpoint. Human drags from this machine pass; the synthetic smoothstep drag doesn't.
+2. **Greylisted IP.** The DataDome challenge text explicitly lists *"Automated (bot) activity on your
+   network (IP 70.131.45.67)"* as a reason. Even a perfect drag from a flagged IP is likely rejected.
+Conclusion: Path A's automated slider cannot be made reliable from this IP.
+
+**Decision: pivot to Path B (noVNC human-solve); Path B fully planned**
+Bailey chose Path B over further Path A humanization. Human drags pass even from the greylisted IP,
+so a human-in-the-loop solve is reliable. The full Path B implementation plan was written into
+`docs/features/improvement_login_integration.md`: the environment-agnostic code design
+(`_solve_datadome` + `_wait_for_manual_slider`), `slider_needed`/`slider_cleared` IPC events,
+`notify.rb` `check_cart_build_state` handlers, `novnc_port` config, Docker Xvfb+x11vnc+noVNC infra,
+and an ordered "build the code side locally first" plan. **No Path B code was written this session —
+planning/documentation only** (per Bailey's direction).
+File: `docs/features/improvement_login_integration.md`
+
+---
+
 ## Implemented / Fixed — 2026-07-01 (twenty-ninth session)
 
 **DataDome identified as Food Lion's challenge vendor (not Kasada)**
@@ -360,12 +392,13 @@ Three new feature specs written via structured interview with Bailey. No bugs fi
 
 ## Known Issues (not yet fixed)
 
-**DataDome slider drag falls ~13px short — Path A not yet passing (twenty-ninth session)**
-`_try_kasada_slider()` finds the correct element in the correct iframe and executes a drag, but
-the distance calculation underestimates by ~13px: `parent_w - bbox["width"] - random.uniform(5, 12)`
-≈ 209px drag; target center is at ~753px requiring ~222px. DataDome rejects the slide.
-Fix: change `- random.uniform(5, 12)` → `+ random.uniform(3, 8)` in `cart_builder/cart.py:_try_kasada_slider()`.
-See "Start here" in TESTING_HANDOFF.md for full fix instructions.
+**Path A automated slider cannot clear DataDome from this IP (thirtieth session — distance fixed, still fails)**
+The drag-distance bug is fixed (now 221px, dead-on target — verified live). But DataDome still
+rejects the automated drag: it fingerprints the *motion* (velocity/timing), not just the endpoint,
+and the outgoing IP (70.131.45.67) is greylisted (challenge text names it for "bot activity").
+Human drags pass; synthetic ones don't. **Path A is abandoned as the primary path** (kept only as a
+best-effort first try). The path forward is Path B (noVNC human-solve) — fully planned in
+`docs/features/improvement_login_integration.md`, not yet built. See "Start here" in TESTING_HANDOFF.md.
 
 **DataDome hard-block variant after repeated attempts**
 After several automated runs in quick succession, DataDome switches from the slider challenge to

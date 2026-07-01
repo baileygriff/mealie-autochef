@@ -29,7 +29,7 @@ All remaining Feedback / Improvements items. Complete these before any new featu
 
 | Item | Category | Why first |
 |---|---|---|
-| Seamless Login Integration | Feedback | Replaces CapSolver path; always-login-first + automated slider + Telegram 2FA |
+| Seamless Login Integration (Path B noVNC) | Feedback | Path A abandoned (DataDome behavioral + IP block); build Path B human-solve loop locally, then Xvfb + noVNC Docker infra |
 | Cart Builder Package Refactor (Steps 3–6) | Feedback | Enables browser-free Python tests; pre-req for FoodLionProvider isolation |
 | Orchestrator Refactor (Sections 2–8) | Feedback | Per-function LLM model config; injectable notifier; `main.rb` → thin router |
 | ~~Debug Screenshots~~ | ~~Feedback~~ | ~~Low effort; completes the feedback backlog~~ ✅ done |
@@ -87,7 +87,7 @@ Lower priority, blocked on an interview, or deferred until a dependency is ready
 
 | Item | Status | Spec |
 |---|---|---|
-| Seamless Login Integration | 🔧 Path A implemented (twenty-eighth session), live-tested (twenty-ninth). Slider found ✅ IPC ✅ drag executes ✅ — drag falls ~13px short, DataDome rejects. Fix: `- random.uniform(5, 12)` → `+ random.uniform(3, 8)` in `_try_kasada_slider()`. Path B (noVNC) is fallback if slider automation can't be made reliable. | [improvement_login_integration.md](docs/features/improvement_login_integration.md) |
+| Seamless Login Integration | 🗂️ **Path A abandoned, Path B chosen + planned (thirtieth session).** Drag distance fixed (221px, dead-on target, verified live) but DataDome still rejects — behavioral motion detection + greylisted IP. Human drags pass, synthetic don't. Path B (noVNC human-solve) is the reliable path; full implementation plan written in the spec, not yet built. Build code side locally first, then Xvfb + noVNC Docker infra. | [improvement_login_integration.md](docs/features/improvement_login_integration.md) |
 | ~~CapSolver Kasada Auto-solving~~ | ❌ Abandoned — `AntiKasadaTask` not supported in CapSolver live API; 2captcha doesn't support Kasada on standard plans | [improvement_capsolver.md](docs/features/improvement_capsolver.md) |
 | Cart Builder Package Refactor | 🗂️ Complete spec (Step 2 done) | [improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
 | Application Orchestrator Refactor | 🗂️ Complete spec (Section 1 done) | [improvement_orchestrator_refactor.md](docs/features/improvement_orchestrator_refactor.md) |
