@@ -4,6 +4,112 @@ Historical record of bugs found, fixes applied, and known issues. Updated at the
 
 ---
 
+## Implemented / Fixed — 2026-07-01 (twenty-ninth session)
+
+**DataDome identified as Food Lion's challenge vendor (not Kasada)**
+The challenge is served from `geo.captcha-delivery.com` as a full-viewport cross-origin iframe.
+All previous Kasada-specific selectors were targeting the main document (which has no challenge
+elements). Detection code, log messages, selector comments, and `detect_session_state()` frame
+URL check all updated to reference DataDome. Frame URL check now catches `captcha-delivery.com`
+and `datadome` keywords in addition to the existing `kasada`/`kpsdk`/`challenge` entries.
+File: `cart_builder/cart.py:detect_session_state()`, `SEL_KASADA_SLIDER`, `_try_kasada_slider()`
+
+**`SEL_KASADA_SLIDER` updated to DataDome-confirmed selectors**
+New first entry: `[class="slider"]` (exact class match — the draggable handle `<div>`).
+Second entry: `.sliderContainer > div:last-child` (structural fallback). Previous Kasada-specific
+patterns (`[class*="kpsdk-slider"]`, `[data-kpsdk] [role="slider"]`, etc.) replaced with
+vendor-agnostic fallbacks for other captcha providers. Confirmed via `probe_kasada.py`.
+File: `cart_builder/cart.py:SEL_KASADA_SLIDER`
+
+**`_try_kasada_slider()` rewritten to search captcha iframe**
+Locates the `geo.captcha-delivery.com` cross-origin iframe via `page.frames`. All `locator()`,
+`is_visible()`, `bounding_box()`, and `evaluate()` calls run against `captcha_frame` (falling
+back to `page` for other vendors). Track width read from `el.parentElement.getBoundingClientRect()`
+— gets `sliderContainer` width (~280px), not the handle itself. Drag starts from handle center
+(`bbox["x"] + bbox["width"] / 2`), not left edge.
+File: `cart_builder/cart.py:_try_kasada_slider()`
+
+**IPC race condition fixed (`_clear_cart_state` removed from `login_failed` path)**
+`run_build_cart()` was calling `_clear_cart_state()` immediately when `_integrated_login`
+returned False. This wiped `slider_failed` from `data/cart_state.json` before the Ruby 2s
+scheduler could read it — the scheduler's `check_cart_build_state` would miss the event and
+never send the Telegram alert. Fixed by removing the `_clear_cart_state()` call from the
+`login_failed` branch. `_integrated_login` already writes the appropriate event; the Ruby side
+reads it within 2s and then clears it after sending the notification.
+File: `cart_builder/cart.py:run_build_cart()`
+
+**Telegram Markdown parse error fixed in `send_login_failed_alert`**
+Backtick code span `` `source .venv/bin/activate && python3 cart_builder/cart.py --login` ``
+caused a Telegram Markdown v1 parse error at byte 200 — the closing backtick after `cart_builder`
+(which contains `_`). Telegram Markdown v1 does not properly handle `_` inside code spans.
+Fixed by removing the backtick formatting and escaping the underscore: `cart\_builder`.
+File: `lib/autochef/notify.rb:send_login_failed_alert()`
+
+**Duplicate Telegram notification suppressed**
+For `kasada_challenge` failures, both the rufus-scheduler (`slider_failed` event → "⚠️ Kasada
+slider could not be automated") and `cmd_build_cart` (`send_login_failed_alert`) would send
+Telegram messages. Fixed by skipping `send_login_failed_alert` in `cmd_build_cart` when
+`reason == 'kasada_challenge'`. Other reasons (credential failure, 2FA timeout) still use the
+generic alert.
+File: `main.rb:cmd_build_cart()`
+
+**`cart_builder/probe_kasada.py` added**
+Diagnostic script: opens Chrome with saved auth, navigates to Food Lion, waits 8s for DataDome
+to fire, inspects all frames, dumps captcha iframe DOM (classes, bounding boxes, buttons, all
+slider-specific selectors). Detects slider variant vs hard-block variant. Run with:
+`source .venv/bin/activate && python3 cart_builder/probe_kasada.py`
+Critical output: confirmed `[class="slider"]` handle at bbox (500, 352, 63×40px);
+`sliderContainer` at (500, 351.5, 280×40px); `sliderTarget` at (722, 352, 63×40px).
+File: `cart_builder/probe_kasada.py` (new, untracked — add to repo if useful long-term)
+
+**IPC flow verified end-to-end**
+`slider_failed` written by cart.py → rufus-scheduler reads within 2s → `check_cart_build_state`
+fires → Telegram "⚠️ Kasada slider could not be automated" received by Bailey. Log line
+`[notify] slider_failed detected — sending Telegram alert` confirmed in serve output.
+
+**Known bug: drag distance 13px short (not yet fixed)**
+`track_width = parent_w - bbox["width"] - random.uniform(5, 12)` ≈ 280 - 63 - 8 = 209px.
+Drag starts at handle center (~531px), so landing point ≈ 531 + 209 = 740px.
+`sliderTarget` center is at ~753px → 13px short. DataDome rejects the drag.
+Fix: change `- random.uniform(5, 12)` to `+ random.uniform(3, 8)` → 220–225px drag → lands at
+~751–756px. See "Start here" in TESTING_HANDOFF.md.
+File: `cart_builder/cart.py:_try_kasada_slider()`
+
+---
+
+## Implemented / Fixed — 2026-06-30 (twenty-eighth session)
+
+**Seamless Login Integration — Path A implemented**
+`_integrated_login(page, context)` added to `cart.py`. Runs within `run_build_cart()`'s existing
+Playwright session — login and cart build share one Chrome session so DataDome bypass state is
+not lost between login and cart build. `run_build_cart()` always calls `_integrated_login` first
+if `detect_session_state()` returns `kasada_challenge`.
+Kasada slider automated via `_try_kasada_slider()` (smoothstep mouse simulation).
+2FA collected via IPC: cart.py → `data/cart_state.json` → rufus-scheduler polls 2s →
+Telegram prompt → Bailey replies → Ruby writes `data/cart_input.json` → cart.py reads code.
+File: `cart_builder/cart.py`, `lib/autochef/notify.rb`, `main.rb`
+
+**New cart.py exports for Path A**
+`CART_STATE_PATH`, `CART_INPUT_PATH`, `SEL_KASADA_SLIDER`, `_write_cart_state`,
+`_clear_cart_state`, `_poll_2fa_code`, `_try_kasada_slider`, `_integrated_login`.
+`run_login()` standalone mode now uses `_try_kasada_slider` instead of CapSolver.
+File: `cart_builder/cart.py`
+
+**New status `login_failed`**
+Returned when `_integrated_login` cannot complete. `main.rb:cmd_build_cart` handles it:
+logs reason, sends `send_login_failed_alert` Telegram message with "Retry Cart Build" button.
+`session_expired` kept for mid-build challenge detection.
+File: `main.rb`, `lib/autochef/notify.rb`
+
+**`notify.rb` additions for Path A**
+`CART_STATE_FILE`, `CART_INPUT_FILE`, `PYTHON_BIN` constants; `check_cart_build_state` public
+method (handles `2fa_needed` + `slider_failed` events); `send_login_failed_alert`;
+`waiting_2fa_code` state handler; `/login` command + `cmd_login`; 2FA hint in help text.
+2s scheduler in `cmd_serve` (`scheduler.every '2s'`) calls `check_cart_build_state`.
+File: `lib/autochef/notify.rb`, `main.rb`
+
+---
+
 ## Implemented / Fixed — 2026-06-30 (twenty-seventh session)
 
 **Proxy setup verified — tinyproxy on Unraid at port 8890**
@@ -254,14 +360,18 @@ Three new feature specs written via structured interview with Bailey. No bugs fi
 
 ## Known Issues (not yet fixed)
 
-**Kasada fires on every automated `build-cart` run — login must be integrated (twenty-seventh session)**
-Kasada re-challenges the browser on every new automated session. `playwright_state.json` only
-saves login cookies, not Kasada bypass state. Every `build-cart` invocation hits Kasada before
-it can reach the store. No automated solver service is viable (CapSolver `AntiKasadaTask`
-`ERROR_TYPE_NOT_SUPPORTED`; 2captcha no standard-plan Kasada support; Hyper Solutions too complex
-to integrate with Playwright). Solution: Seamless Login Integration — login always runs first in
-`build-cart`, with Kasada slider automation (Path A) and noVNC fallback (Path B). Spec at
-[docs/features/improvement_login_integration.md](docs/features/improvement_login_integration.md).
+**DataDome slider drag falls ~13px short — Path A not yet passing (twenty-ninth session)**
+`_try_kasada_slider()` finds the correct element in the correct iframe and executes a drag, but
+the distance calculation underestimates by ~13px: `parent_w - bbox["width"] - random.uniform(5, 12)`
+≈ 209px drag; target center is at ~753px requiring ~222px. DataDome rejects the slide.
+Fix: change `- random.uniform(5, 12)` → `+ random.uniform(3, 8)` in `cart_builder/cart.py:_try_kasada_slider()`.
+See "Start here" in TESTING_HANDOFF.md for full fix instructions.
+
+**DataDome hard-block variant after repeated attempts**
+After several automated runs in quick succession, DataDome switches from the slider challenge to
+a hard-block ("Access is temporarily restricted"). No interactive element — only waiting restores
+the slider. ~30 min idle from the same IP returns the slider variant. Run `probe_kasada.py` first
+to check which variant is active before attempting drag fixes.
 
 For per-feature verification status (what's been tested end-to-end vs. still untested), see [testing_verifications.md](testing_verifications.md).
 

@@ -820,7 +820,12 @@ def cmd_build_cart(force: false)
     puts "Food Lion login failed (#{reason}) — integrated login (Path A) could not complete."
     puts "If slider automation failed, run: source .venv/bin/activate && python3 cart_builder/cart.py --login"
     if cfg.notify.channel == 'telegram' && !cfg.notify.telegram_bot_token.to_s.empty?
-      Autochef::Notifier.new(cfg, mealie_client: client).send_login_failed_alert(reason)
+      # For kasada_challenge the serve scheduler already handles notification via the
+      # slider_failed event in cart_state.json. For other failure reasons, send the
+      # generic alert (e.g. credential error, 2FA timeout).
+      unless reason == 'kasada_challenge'
+        Autochef::Notifier.new(cfg, mealie_client: client).send_login_failed_alert(reason)
+      end
     end
     return 1
 

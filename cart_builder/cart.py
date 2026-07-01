@@ -293,16 +293,18 @@ SEL_LOGIN_SUBMIT = [
     'button:has-text("Login")',
 ]
 
-# Kasada slider elements — used by _try_kasada_slider() in Path A automated solving.
-# These selectors target the draggable handle inside the Kasada challenge overlay.
-# Tried in order; discovery via probe script recommended if all fail.
+# DataDome / captcha-delivery.com slider handle — used by _try_kasada_slider().
+# Confirmed via probe (2026-07-01): the draggable handle is <div class="slider"> inside
+# <div class="sliderContainer"> (280px track). The target zone is <div class="sliderTarget">.
+# All elements are inside the captcha-delivery.com cross-origin iframe (frame[1]).
+# Selectors are relative to the captcha iframe's document.
 SEL_KASADA_SLIDER = [
-    '[class*="kpsdk-slider"]',
-    '[class*="slider-container"] [class*="drag"]',
-    '[class*="challenge"] [class*="slider"]',
-    '[data-kpsdk] [role="slider"]',
-    '[class*="slider-handle"]',
-    '[class*="drag-handle"]',
+    '[class="slider"]',                   # DataDome exact class — the drag handle div
+    '.sliderContainer > div:last-child',  # DataDome fallback: last div child of track
+    '#slider',                            # generic id-based fallback
+    '[id*="slider"]',                     # generic id wildcard
+    '[class*="slider-handle"]',           # other captcha vendors
+    '[class*="drag-handle"]',             # other captcha vendors
 ]
 
 # Navigation link to Food Lion's Past Purchases page (top nav bar).
@@ -521,25 +523,55 @@ def _poll_2fa_code(timeout_secs: int = 300) -> Optional[str]:
 
 def _try_kasada_slider(page: Page) -> bool:
     """
-    Attempt to automate the Kasada slider challenge using Playwright mouse simulation.
+    Attempt to automate the DataDome slider challenge using Playwright mouse simulation.
 
+    The challenge is served inside a cross-origin iframe from geo.captcha-delivery.com.
+    We locate the iframe frame first, then search for the slider handle within it.
     Uses smoothstep easing with random micro-jitter to mimic human drag behaviour.
     Returns True if detect_session_state() reports "valid" after the drag, False otherwise.
     This is Path A of the Seamless Login Integration spec — no infrastructure changes needed.
     """
     log("  Kasada slider: attempting automated drag (Path A)...")
 
+    # DataDome serves the challenge in a captcha-delivery.com cross-origin iframe.
+    # Locate it first; fall back to main page if not found (for other challenge types).
+    captcha_frame = next(
+        (f for f in page.frames if 'captcha-delivery.com' in f.url),
+        None
+    )
+    if captcha_frame:
+        log(f"  Kasada slider: found captcha iframe ({captcha_frame.url[:60]}...)")
+    else:
+        log("  Kasada slider: no captcha iframe found, trying main frame")
+
+    target = captcha_frame or page
+
     for sel in SEL_KASADA_SLIDER:
         try:
-            el = page.locator(sel).first
+            el = target.locator(sel).first
             if not el.is_visible(timeout=2000):
                 continue
             bbox = el.bounding_box()
-            if not bbox or bbox["width"] < 10:
+            if not bbox or bbox["width"] < 5:
                 continue
 
-            start_x = bbox["x"] + random.uniform(3, 8)
-            drag_distance = bbox["width"] - random.uniform(8, 15)
+            # DataDome slider: handle (~63x40px) at far left of the track container (~280px).
+            # Drag from handle center to just before the target zone on the right.
+            # Try to get the track width from the parent element (sliderContainer).
+            track_width = None
+            try:
+                parent_w = target.locator(sel).first.evaluate(
+                    "el => { const p = el.parentElement; "
+                    "return p ? p.getBoundingClientRect().width : null; }"
+                )
+                if parent_w and parent_w > bbox["width"] * 1.5:
+                    # Drag from handle center to near the right end of the track
+                    track_width = parent_w - bbox["width"] - random.uniform(5, 12)
+            except Exception:
+                pass
+
+            start_x = bbox["x"] + bbox["width"] / 2 + random.uniform(-3, 3)
+            drag_distance = track_width if track_width else (bbox["width"] * 3 - random.uniform(8, 15))
             y = bbox["y"] + bbox["height"] / 2 + random.uniform(-2, 2)
             steps = random.randint(20, 30)
             ms_per_step_min = random.randint(30, 40)
@@ -559,7 +591,7 @@ def _try_kasada_slider(page: Page) -> bool:
                 page.wait_for_timeout(random.randint(ms_per_step_min, ms_per_step_max))
 
             page.mouse.up()
-            pace(2000)  # wait for Kasada to verify the drag
+            pace(2000)  # wait for challenge to verify the drag
 
             result = detect_session_state(page)
             if result == "valid":
@@ -977,12 +1009,13 @@ def detect_session_state(page: Page) -> str:
         log(f"  Session check: login redirect detected")
         return "login_required"
 
-    # Check all frames for Kasada-hosted challenge URLs (cross-origin iframe variant).
+    # Check all frames for challenge-hosted URLs (DataDome, Kasada, or other vendor).
+    # DataDome serves from geo.captcha-delivery.com; Kasada uses kpsdk/challenge paths.
     try:
         for frame in page.frames:
             furl = frame.url.lower()
-            if any(kw in furl for kw in ("kasada", "kpsdk", "challenge")):
-                log(f"  Session check: Kasada frame URL detected ({frame.url})")
+            if any(kw in furl for kw in ("kasada", "kpsdk", "challenge", "captcha-delivery.com", "datadome")):
+                log(f"  Session check: challenge frame URL detected ({frame.url[:80]})")
                 return "kasada_challenge"
     except Exception:
         pass
@@ -1669,7 +1702,9 @@ def run_build_cart(payload: dict) -> dict:
                 log(f"Session not valid ({session_state}) — running integrated login (Path A)...")
                 if not _integrated_login(page, context):
                     log("Integrated login failed — aborting cart build")
-                    _clear_cart_state()
+                    # Do NOT clear cart_state.json here — _integrated_login already wrote
+                    # the appropriate event (slider_failed / etc.) for the Ruby serve bot
+                    # to read. Clearing it here would cause the 2s scheduler to miss it.
                     return make_output("login_failed", abort_reason=session_state)
 
                 # Re-navigate to the store page after login (login changes the URL)

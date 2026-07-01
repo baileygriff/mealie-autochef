@@ -209,7 +209,7 @@ module Autochef
         "Reason: #{reason}",
         "",
         "To fix: tap the button below to try again, or run manually:",
-        "`source .venv/bin/activate && python3 cart_builder/cart.py --login`",
+        "source .venv/bin/activate && python3 cart\\_builder/cart.py --login",
       ].join("\n")
 
       keyboard = Telegram::Bot::Types::InlineKeyboardMarkup.new(

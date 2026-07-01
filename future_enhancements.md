@@ -87,7 +87,7 @@ Lower priority, blocked on an interview, or deferred until a dependency is ready
 
 | Item | Status | Spec |
 |---|---|---|
-| Seamless Login Integration | 🗂️ Spec complete. Path A: always-login-first + automated Kasada slider + Telegram 2FA IPC. Path B: noVNC fallback (depends on Infra 12). CapSolver/2captcha not viable — solver services don't support Kasada. | [improvement_login_integration.md](docs/features/improvement_login_integration.md) |
+| Seamless Login Integration | 🔧 Path A implemented (twenty-eighth session), live-tested (twenty-ninth). Slider found ✅ IPC ✅ drag executes ✅ — drag falls ~13px short, DataDome rejects. Fix: `- random.uniform(5, 12)` → `+ random.uniform(3, 8)` in `_try_kasada_slider()`. Path B (noVNC) is fallback if slider automation can't be made reliable. | [improvement_login_integration.md](docs/features/improvement_login_integration.md) |
 | ~~CapSolver Kasada Auto-solving~~ | ❌ Abandoned — `AntiKasadaTask` not supported in CapSolver live API; 2captcha doesn't support Kasada on standard plans | [improvement_capsolver.md](docs/features/improvement_capsolver.md) |
 | Cart Builder Package Refactor | 🗂️ Complete spec (Step 2 done) | [improvement_cart_builder_refactor.md](docs/features/improvement_cart_builder_refactor.md) |
 | Application Orchestrator Refactor | 🗂️ Complete spec (Section 1 done) | [improvement_orchestrator_refactor.md](docs/features/improvement_orchestrator_refactor.md) |

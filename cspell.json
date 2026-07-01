@@ -79,7 +79,15 @@
     "squid",
     "twocaptcha",
     "2captcha",
-    "smoothstep"
+    "smoothstep",
+    "DataDome",
+    "datadome",
+    "captcha",
+    "iframe",
+    "sliderContainer",
+    "sliderTarget",
+    "noVNC",
+    "novnc"
   ],
   "ignorePaths": [
     "data/**",
